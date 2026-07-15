@@ -1,12 +1,33 @@
-print('updated')
+print("new version")
 --============================================================================--
---  Usage:
+--
+--  Setup:
 --    local Library = loadstring(game:HttpGet('YOUR_RAW_URL'))()
 --    local Window  = Library:MakeWindow({ Name = 'Egg Farm', SubTitle = 'by zvppe' })
 --    local Tab     = Window:MakeTab({ Name = 'Main' })
 --    local Section = Tab:AddSection({ Name = 'Main' })
---    Section:AddToggle({ Name = 'Auto Hit', Default = false, Callback = function(v) end })
+--
+--  Elements exist on BOTH sections and tabs (Tab:AddButton{...} works too).
+--  Every adder takes a config table and returns a handle (methods listed).
+--
+--    :AddLabel(text | { Name })                              -> { Set(text) }
+--    :AddParagraph({ Name, Content })                        -> { Set(content) }
+--    :AddButton({ Name, Callback })                          -> { Set(text) }
+--    :AddToggle({ Name, Default, Callback })                 -> { Set(bool), Value }
+--    :AddSlider({ Name, Min, Max, Increment, Default,
+--                 ValueName, Color, Callback })              -> { Set(num), Value }
+--    :AddDropdown({ Name, Default, Options, Callback })
+--                 -> { Set(opt), Refresh(optsArray, deleteCurrent), Value }
+--    :AddMultiDropdown({ Name, Default, Options, Callback }) -> { Set(array), Value }
+--    :AddBind({ Name, Default (KeyCode), Hold, Callback })   -> { Set(keycode), Value }
+--    :AddTextbox({ Name, Default, TextDisappear, Callback }) -> { Set(text) }
+--    :AddColorpicker({ Name, Default (Color3), Callback })   -> { Set(color3), Value }
+--
+--  Toggles/dropdowns/sliders/colorpickers fire Callback once at creation.
+--
 --    Library:MakeNotification('Title', 'Body', 3)
+--    Library:MakeNotification({ Name = 'Title', Content = 'Body', Time = 3 })
+--    RightShift toggles window visibility.  Library:Destroy() tears it all down.
 --============================================================================--
 
 --============================================================================--
@@ -356,6 +377,9 @@ function Library:MakeWindow(config)
     -- elements share a single implementation.
     --====================================================================--
     local function attachElements(target, container)
+        -- `self` inside the colon-methods below is the target (tab/section),
+        -- so keep a reference to the library instance for tracked connections.
+        local lib = self
 
         --// Label ------------------------------------------------------- --
         -- Accepts either a string or { Name = string }.
@@ -1108,7 +1132,7 @@ function Library:MakeWindow(config)
                 chip.Text = "..."
             end)
 
-            self:_connect(UserInputService.InputBegan, function(input, gameProcessed)
+            lib:_connect(UserInputService.InputBegan, function(input, gameProcessed)
                 if listening then
                     if input.UserInputType == Enum.UserInputType.Keyboard then
                         if input.KeyCode == Enum.KeyCode.Escape then
@@ -1145,7 +1169,7 @@ function Library:MakeWindow(config)
             end)
 
             if hold then
-                self:_connect(UserInputService.InputEnded, function(input, gameProcessed)
+                lib:_connect(UserInputService.InputEnded, function(input, gameProcessed)
                     if listening then
                         return
                     end
@@ -1519,7 +1543,7 @@ function Library:MakeWindow(config)
             ScrollBarThickness = 4,
             ScrollBarImageColor3 = Theme.Accent,
             CanvasSize = UDim2.new(0, 0, 0, 0),
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            AutomaticCanvasSize = Enum.AutomaticCanvasSize.Y,
             Visible = false,
             Parent = content,
         })
@@ -1542,6 +1566,9 @@ function Library:MakeWindow(config)
         if #window._tabs == 1 then
             selectTab(tab)
         end
+
+        -- Tab-level elements (Orion-style) flow straight into the page.
+        attachElements(tab, page)
 
         --// Section: a labelled group inside this tab's page --
         function tab:AddSection(sectionConfig)
@@ -1578,382 +1605,7 @@ function Library:MakeWindow(config)
             })
 
             local section = {}
-
-            ------------------------------------------------------------------
-            -- Toggle: pill-style animated switch.
-            ------------------------------------------------------------------
-            function section:AddToggle(cfg)
-                cfg = cfg or {}
-                local state = cfg.Default and true or false
-
-                local row = create("Frame", {
-                    Size = UDim2.new(1, 0, 0, 34),
-                    BackgroundColor3 = Theme.PanelLight,
-                    BorderSizePixel = 0,
-                    Parent = sectionFrame,
-                })
-                corner(row, 8)
-                pad(row, 8)
-
-                create("TextLabel", {
-                    BackgroundTransparency = 1,
-                    Size = UDim2.new(1, -60, 1, 0),
-                    Font = Enum.Font.GothamMedium,
-                    Text = cfg.Name or "Toggle",
-                    TextColor3 = Theme.Text,
-                    TextSize = 14,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    Parent = row,
-                })
-
-                -- Track + knob.
-                local track = create("TextButton", {
-                    AnchorPoint = Vector2.new(1, 0.5),
-                    Position = UDim2.new(1, 0, 0.5, 0),
-                    Size = UDim2.fromOffset(44, 22),
-                    BackgroundColor3 = state and Theme.Accent or Theme.Toggle,
-                    AutoButtonColor = false,
-                    Text = "",
-                    Parent = row,
-                })
-                corner(track, 11)
-
-                local knob = create("Frame", {
-                    AnchorPoint = Vector2.new(0, 0.5),
-                    Position = state and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-                    Size = UDim2.fromOffset(18, 18),
-                    BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-                    BorderSizePixel = 0,
-                    Parent = track,
-                })
-                corner(knob, 9)
-
-                local function render()
-                    TweenService:Create(track, FAST, {
-                        BackgroundColor3 = state and Theme.Accent or Theme.Toggle,
-                    }):Play()
-                    TweenService:Create(knob, FAST, {
-                        Position = state and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-                    }):Play()
-                end
-
-                track.MouseButton1Click:Connect(function()
-                    state = not state
-                    render()
-                    if cfg.Callback then
-                        cfg.Callback(state)
-                    end
-                end)
-
-                -- Fire once for the default so logic + UI start in sync.
-                if cfg.Callback then
-                    cfg.Callback(state)
-                end
-                return section
-            end
-
-            ------------------------------------------------------------------
-            -- Button: click-feedback animation.
-            ------------------------------------------------------------------
-            function section:AddButton(cfg)
-                cfg = cfg or {}
-
-                local btn = create("TextButton", {
-                    Size = UDim2.new(1, 0, 0, 34),
-                    BackgroundColor3 = Theme.PanelLight,
-                    AutoButtonColor = false,
-                    Font = Enum.Font.GothamMedium,
-                    Text = cfg.Name or "Button",
-                    TextColor3 = Theme.Text,
-                    TextSize = 14,
-                    Parent = sectionFrame,
-                })
-                corner(btn, 8)
-
-                btn.MouseButton1Click:Connect(function()
-                    -- Quick press feedback: flash to accent and back.
-                    TweenService:Create(btn, FAST, { BackgroundColor3 = Theme.Accent }):Play()
-                    task.delay(0.12, function()
-                        TweenService:Create(btn, FAST, { BackgroundColor3 = Theme.PanelLight }):Play()
-                    end)
-                    if cfg.Callback then
-                        cfg.Callback()
-                    end
-                end)
-                return section
-            end
-
-            ------------------------------------------------------------------
-            -- Dropdown (single select).
-            ------------------------------------------------------------------
-            function section:AddDropdown(cfg)
-                cfg = cfg or {}
-                local options = cfg.Options or {}
-                local selected = cfg.Default
-                local expanded = false
-
-                local headerH  = 34
-                local optionH  = 28
-                local expandedH = headerH + (#options * optionH) + 6
-
-                local container = create("Frame", {
-                    Size = UDim2.new(1, 0, 0, headerH),
-                    BackgroundColor3 = Theme.PanelLight,
-                    BorderSizePixel = 0,
-                    ClipsDescendants = true,
-                    Parent = sectionFrame,
-                })
-                corner(container, 8)
-
-                local header = create("TextButton", {
-                    Size = UDim2.new(1, 0, 0, headerH),
-                    BackgroundTransparency = 1,
-                    AutoButtonColor = false,
-                    Text = "",
-                    Parent = container,
-                })
-                create("TextLabel", {
-                    BackgroundTransparency = 1,
-                    Position = UDim2.new(0, 12, 0, 0),
-                    Size = UDim2.new(1, -24, 1, 0),
-                    Font = Enum.Font.GothamMedium,
-                    Text = (cfg.Name or "Dropdown") .. ": " .. tostring(selected),
-                    TextColor3 = Theme.Text,
-                    TextSize = 14,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    Name = "Value",
-                    Parent = header,
-                })
-                local arrow = create("TextLabel", {
-                    AnchorPoint = Vector2.new(1, 0),
-                    Position = UDim2.new(1, -12, 0, 0),
-                    Size = UDim2.new(0, 20, 0, headerH),
-                    BackgroundTransparency = 1,
-                    Font = Enum.Font.GothamBold,
-                    Text = "v",
-                    TextColor3 = Theme.SubText,
-                    TextSize = 14,
-                    Parent = header,
-                })
-
-                local valueLabel = header:FindFirstChild("Value")
-
-                -- Options holder positioned below the header.
-                local holder = create("Frame", {
-                    Position = UDim2.new(0, 0, 0, headerH),
-                    Size = UDim2.new(1, 0, 0, expandedH - headerH),
-                    BackgroundTransparency = 1,
-                    Parent = container,
-                })
-                pad(holder, 4)
-                create("UIListLayout", {
-                    FillDirection = Enum.FillDirection.Vertical,
-                    Padding = UDim.new(0, 2),
-                    SortOrder = Enum.SortOrder.LayoutOrder,
-                    Parent = holder,
-                })
-
-                local function setExpanded(open)
-                    expanded = open
-                    TweenService:Create(container, SMOOTH, {
-                        Size = UDim2.new(1, 0, 0, open and expandedH or headerH),
-                    }):Play()
-                    TweenService:Create(arrow, FAST, {
-                        Rotation = open and 180 or 0,
-                    }):Play()
-                end
-
-                for _, option in ipairs(options) do
-                    local optBtn = create("TextButton", {
-                        Size = UDim2.new(1, 0, 0, optionH - 2),
-                        BackgroundColor3 = Theme.Panel,
-                        AutoButtonColor = false,
-                        Font = Enum.Font.Gotham,
-                        Text = option,
-                        TextColor3 = Theme.SubText,
-                        TextSize = 13,
-                        Parent = holder,
-                    })
-                    corner(optBtn, 6)
-
-                    optBtn.MouseButton1Click:Connect(function()
-                        selected = option
-                        valueLabel.Text = (cfg.Name or "Dropdown") .. ": " .. tostring(selected)
-                        setExpanded(false)
-                        if cfg.Callback then
-                            cfg.Callback(selected)
-                        end
-                    end)
-                end
-
-                header.MouseButton1Click:Connect(function()
-                    setExpanded(not expanded)
-                end)
-
-                -- Fire once with the default selection.
-                if cfg.Callback and selected ~= nil then
-                    cfg.Callback(selected)
-                end
-                return section
-            end
-
-            ------------------------------------------------------------------
-            -- Multi-select dropdown: each option toggles into a selection set.
-            -- Callback receives the full selected list (array of strings).
-            ------------------------------------------------------------------
-            function section:AddMultiDropdown(cfg)
-                cfg = cfg or {}
-                local options = cfg.Options or {}
-                local expanded = false
-
-                -- Selection state keyed by option name.
-                local chosen = {}
-                for _, name in ipairs(cfg.Default or {}) do
-                    chosen[name] = true
-                end
-
-                -- Builds the ordered array of currently selected options.
-                local function selectedList()
-                    local list = {}
-                    for _, name in ipairs(options) do
-                        if chosen[name] then
-                            table.insert(list, name)
-                        end
-                    end
-                    return list
-                end
-
-                local headerH   = 34
-                local optionH   = 28
-                local expandedH = headerH + (#options * optionH) + 6
-
-                local container = create("Frame", {
-                    Size = UDim2.new(1, 0, 0, headerH),
-                    BackgroundColor3 = Theme.PanelLight,
-                    BorderSizePixel = 0,
-                    ClipsDescendants = true,
-                    Parent = sectionFrame,
-                })
-                corner(container, 8)
-
-                local header = create("TextButton", {
-                    Size = UDim2.new(1, 0, 0, headerH),
-                    BackgroundTransparency = 1,
-                    AutoButtonColor = false,
-                    Text = "",
-                    Parent = container,
-                })
-                local valueLabel = create("TextLabel", {
-                    BackgroundTransparency = 1,
-                    Position = UDim2.new(0, 12, 0, 0),
-                    Size = UDim2.new(1, -24, 1, 0),
-                    Font = Enum.Font.GothamMedium,
-                    Text = cfg.Name or "Select",
-                    TextColor3 = Theme.Text,
-                    TextSize = 14,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    Parent = header,
-                })
-                local arrow = create("TextLabel", {
-                    AnchorPoint = Vector2.new(1, 0),
-                    Position = UDim2.new(1, -12, 0, 0),
-                    Size = UDim2.new(0, 20, 0, headerH),
-                    BackgroundTransparency = 1,
-                    Font = Enum.Font.GothamBold,
-                    Text = "v",
-                    TextColor3 = Theme.SubText,
-                    TextSize = 14,
-                    Parent = header,
-                })
-
-                local function refreshSummary()
-                    local list = selectedList()
-                    local summary = (#list > 0) and table.concat(list, ", ") or "None"
-                    valueLabel.Text = (cfg.Name or "Select") .. ": " .. summary
-                end
-
-                local holder = create("Frame", {
-                    Position = UDim2.new(0, 0, 0, headerH),
-                    Size = UDim2.new(1, 0, 0, expandedH - headerH),
-                    BackgroundTransparency = 1,
-                    Parent = container,
-                })
-                pad(holder, 4)
-                create("UIListLayout", {
-                    FillDirection = Enum.FillDirection.Vertical,
-                    Padding = UDim.new(0, 2),
-                    SortOrder = Enum.SortOrder.LayoutOrder,
-                    Parent = holder,
-                })
-
-                local function setExpanded(open)
-                    expanded = open
-                    TweenService:Create(container, SMOOTH, {
-                        Size = UDim2.new(1, 0, 0, open and expandedH or headerH),
-                    }):Play()
-                    TweenService:Create(arrow, FAST, {
-                        Rotation = open and 180 or 0,
-                    }):Play()
-                end
-
-                for _, option in ipairs(options) do
-                    local optBtn = create("TextButton", {
-                        Size = UDim2.new(1, 0, 0, optionH - 2),
-                        BackgroundColor3 = Theme.Panel,
-                        AutoButtonColor = false,
-                        Text = "",
-                        Parent = holder,
-                    })
-                    corner(optBtn, 6)
-
-                    create("TextLabel", {
-                        BackgroundTransparency = 1,
-                        Position = UDim2.new(0, 10, 0, 0),
-                        Size = UDim2.new(1, -40, 1, 0),
-                        Font = Enum.Font.Gotham,
-                        Text = option,
-                        TextColor3 = Theme.SubText,
-                        TextSize = 13,
-                        TextXAlignment = Enum.TextXAlignment.Left,
-                        Parent = optBtn,
-                    })
-
-                    -- Checkmark indicator on the right.
-                    local check = create("TextLabel", {
-                        AnchorPoint = Vector2.new(1, 0.5),
-                        Position = UDim2.new(1, -10, 0.5, 0),
-                        Size = UDim2.fromOffset(18, 18),
-                        BackgroundTransparency = 1,
-                        Font = Enum.Font.GothamBold,
-                        Text = chosen[option] and "\u{2713}" or "",
-                        TextColor3 = Theme.Accent,
-                        TextSize = 16,
-                        Parent = optBtn,
-                    })
-
-                    optBtn.MouseButton1Click:Connect(function()
-                        chosen[option] = not chosen[option]
-                        check.Text = chosen[option] and "\u{2713}" or ""
-                        refreshSummary()
-                        if cfg.Callback then
-                            cfg.Callback(selectedList())
-                        end
-                    end)
-                end
-
-                header.MouseButton1Click:Connect(function()
-                    setExpanded(not expanded)
-                end)
-
-                refreshSummary()
-
-                -- Fire once with the default selection array.
-                if cfg.Callback then
-                    cfg.Callback(selectedList())
-                end
-                return section
-            end
-
+            attachElements(section, sectionFrame)
             return section
         end
 
@@ -2100,6 +1752,14 @@ end
 --// Notifications -------------------------------------------------------- --
 -- Bottom-right toast: slides / fades in, auto-dismisses after `time` seconds.
 function Library:MakeNotification(title, desc, time)
+    -- Accept either positional (title, desc, time) or an Orion-style table
+    -- { Name, Content, Time }. Image, if provided, is ignored.
+    if type(title) == "table" then
+        local cfg = title
+        title = cfg.Name
+        desc  = cfg.Content
+        time  = cfg.Time
+    end
     time = time or 3
 
     local toast = create("Frame", {
@@ -2115,11 +1775,12 @@ function Library:MakeNotification(title, desc, time)
     toastStroke.Transparency = 1
     pad(toast, 12)
 
-    -- Accent bar down the left edge.
-    create("Frame", {
+    -- Accent bar down the left edge (fades with the rest of the toast).
+    local accentBar = create("Frame", {
         Size = UDim2.new(0, 3, 1, -16),
         Position = UDim2.new(0, 0, 0, 8),
         BackgroundColor3 = Theme.Accent,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Parent = toast,
     })
@@ -2158,6 +1819,7 @@ function Library:MakeNotification(title, desc, time)
             BackgroundTransparency = 0.05,
         }):Play()
         TweenService:Create(toastStroke, SMOOTH, { Transparency = 0.4 }):Play()
+        TweenService:Create(accentBar, SMOOTH, { BackgroundTransparency = 0 }):Play()
         TweenService:Create(titleLabel, SMOOTH, { TextTransparency = 0 }):Play()
         TweenService:Create(descLabel, SMOOTH, { TextTransparency = 0 }):Play()
 
@@ -2169,6 +1831,7 @@ function Library:MakeNotification(title, desc, time)
             BackgroundTransparency = 1,
         }):Play()
         TweenService:Create(toastStroke, SMOOTH, { Transparency = 1 }):Play()
+        TweenService:Create(accentBar, SMOOTH, { BackgroundTransparency = 1 }):Play()
         TweenService:Create(titleLabel, SMOOTH, { TextTransparency = 1 }):Play()
         TweenService:Create(descLabel, SMOOTH, { TextTransparency = 1 }):Play()
 
