@@ -353,7 +353,7 @@ function Library:MakeWindow(config)
             ScrollBarThickness = 4,
             ScrollBarImageColor3 = Theme.Accent,
             CanvasSize = UDim2.new(0, 0, 0, 0),
-            AutomaticCanvasSize = Enum.AutomaticCanvasSize.Y,
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
             Visible = false,
             Parent = content,
         })
@@ -950,10 +950,11 @@ function Library:MakeNotification(title, desc, time)
     pad(toast, 12)
 
     -- Accent bar down the left edge.
-    create("Frame", {
+    local accentBar = create("Frame", {
         Size = UDim2.new(0, 3, 1, -16),
         Position = UDim2.new(0, 0, 0, 8),
         BackgroundColor3 = Theme.Accent,
+        BackgroundTransparency = 1,   -- start invisible, fade with the rest
         BorderSizePixel = 0,
         Parent = toast,
     })
@@ -991,9 +992,11 @@ function Library:MakeNotification(title, desc, time)
             Position = UDim2.new(0, 0, 0, 0),
             BackgroundTransparency = 0.05,
         }):Play()
+
         TweenService:Create(toastStroke, SMOOTH, { Transparency = 0.4 }):Play()
         TweenService:Create(titleLabel, SMOOTH, { TextTransparency = 0 }):Play()
         TweenService:Create(descLabel, SMOOTH, { TextTransparency = 0 }):Play()
+        TweenService:Create(accentBar, SMOOTH, { BackgroundTransparency = 0 }):Play()
 
         task.wait(time)
 
@@ -1005,6 +1008,7 @@ function Library:MakeNotification(title, desc, time)
         TweenService:Create(toastStroke, SMOOTH, { Transparency = 1 }):Play()
         TweenService:Create(titleLabel, SMOOTH, { TextTransparency = 1 }):Play()
         TweenService:Create(descLabel, SMOOTH, { TextTransparency = 1 }):Play()
+        TweenService:Create(accentBar, SMOOTH, { BackgroundTransparency = 1 }):Play()
 
         task.wait(0.3)
         toast:Destroy()
