@@ -1,4 +1,3 @@
-print("new version")
 --============================================================================--
 --
 --  Setup:
@@ -44,7 +43,7 @@ local TweenService       = game:GetService("TweenService")
 local RunService         = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
-
+local guiTitle, guiSubtitle, guiCredits
 
 --============================================================================--
 --// UI Library
@@ -151,10 +150,16 @@ function Library:MakeWindow(config)
     config = config or {}
     local title    = config.Name     or "Window"
     local subtitle = config.SubTitle or ""
+    local credits = config.Credits or ""
 
     --// ScreenGui, with re-execute cleanup of any previous instance --
-    local guiName = "EggFarmGui_zvppe"
+    local guiName = "Window"
 
+    guiTitle = title
+    guiSubtitle = subtitle
+    guiCredits = credits
+    
+    
     local function destroyExisting(parent)
         local old = parent and parent:FindFirstChild(guiName)
         if old then
@@ -1706,7 +1711,7 @@ function Library:_playIntro(onDone)
         Position = UDim2.new(0, 0, 0, 22),
         Size = UDim2.new(1, 0, 0, 24),
         Font = Enum.Font.GothamBold,
-        Text = "Egg Farm",
+        Text = guiTitle,
         TextColor3 = Theme.Text,
         TextTransparency = 1,
         TextSize = 20,
@@ -1717,7 +1722,7 @@ function Library:_playIntro(onDone)
         Position = UDim2.new(0, 0, 0, 48),
         Size = UDim2.new(1, 0, 0, 18),
         Font = Enum.Font.Gotham,
-        Text = "Credits: zvppe",
+        Text = "Credits: "..guiCredits,
         TextColor3 = Theme.Accent,
         TextTransparency = 1,
         TextSize = 14,
@@ -1763,7 +1768,8 @@ function Library:MakeNotification(title, desc, time)
     time = time or 3
 
     local toast = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 64),
+        Size = UDim2.new(1, 0, 0, 44),
+        AutomaticSize = Enum.AutomaticSize.Y,  -- grow to fit the body text
         BackgroundColor3 = Theme.Panel,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
@@ -1800,7 +1806,8 @@ function Library:MakeNotification(title, desc, time)
     local descLabel = create("TextLabel", {
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 10, 0, 22),
-        Size = UDim2.new(1, -10, 1, -22),
+        Size = UDim2.new(1, -10, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,  -- height follows the wrapped text
         Font = Enum.Font.Gotham,
         Text = desc or "",
         TextColor3 = Theme.SubText,
