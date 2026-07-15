@@ -1,6 +1,5 @@
 print('updated')
 --============================================================================--
---  EggFarmUI  -  standalone loadstring UI library (Orion-style API)
 --  Usage:
 --    local Library = loadstring(game:HttpGet('YOUR_RAW_URL'))()
 --    local Window  = Library:MakeWindow({ Name = 'Egg Farm', SubTitle = 'by zvppe' })
