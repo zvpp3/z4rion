@@ -1,3 +1,4 @@
+print('updated')
 --============================================================================--
 --  EggFarmUI  -  standalone loadstring UI library (Orion-style API)
 --  Usage:
