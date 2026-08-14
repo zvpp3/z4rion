@@ -1672,7 +1672,7 @@ function Library:MakeWindow(config)
 
     --// RightShift toggles window visibility --
     self:_connect(UserInputService.InputBegan, function(input, gameProcessed)
-        if gameProcessed then return end
+        if UserInputService:GetFocusedTextBox() then return end
         if input.KeyCode == Enum.KeyCode.RightShift then
             main.Visible = not main.Visible
         end
