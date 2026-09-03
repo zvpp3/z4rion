@@ -1675,6 +1675,10 @@ function Library:MakeWindow(config)
         if UserInputService:GetFocusedTextBox() then return end
         if input.KeyCode == Enum.KeyCode.RightShift then
             main.Visible = not main.Visible
+
+            local closeOrShown = main.Visible and "Shown" or "Closed"
+            local hideOrShow = main.Visible and "hide" or "open"
+            Library:MakeNotification("Window " .. closeOrShown, "RightShift to " .. hideOrShow .. " the window again.", 3)
         end
     end)
 
