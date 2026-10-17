@@ -28,9 +28,12 @@
 --  Toggles/dropdowns/sliders/colorpickers fire Callback once at creation.
 --  Saved controls restore their saved value instead of firing the default.
 --
+--  MakeWindow accepts Icon = "rbxassetid://..." (Logo is an alias), using
+--  rbxassetid://134705462875606 by default. UseSplash = true is the default;
+--  UseSplash = false skips the entrance card. Lua booleans are lowercase.
 --  MakeWindow also accepts SaveConfig (false by default), ConfigName (defaults
---  to Name), and ConfigFolder (defaults to "z4rion"). Config files are named
---  z4rion_<ConfigName>.txt and contain JSON. Requires executor file functions.
+--  to Name), and ConfigFolder (defaults to "AstraHub"). Config files are named
+--  AstraHub_<ConfigName>.txt and contain JSON. Requires executor file functions.
 --  Value controls accept Flag (unique stable ID) and SaveConfig (false by default).
 --  Set SaveConfig = true on BOTH the window and each control to opt into saving.
 --  All element config tables accept HoverTip = "". Nonempty tips appear above
@@ -63,6 +66,7 @@ local TweenService       = game:GetService("TweenService")
 local RunService         = game:GetService("RunService")
 local HttpService        = game:GetService("HttpService")
 local TextService        = game:GetService("TextService")
+local GuiService         = game:GetService("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
 local guiTitle, guiSubtitle, guiCredits
@@ -94,6 +98,10 @@ local Theme = {
 local FAST   = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local SMOOTH = TweenInfo.new(0.21, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local POP    = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local SLIDER_GLIDE = TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local THUMB_MOTION = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local TOAST_ENTER = TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local DEFAULT_ICON = "rbxassetid://134705462875606"
 local TITLE_HEIGHT = 64
 local SIDEBAR_WIDTH = 176
 
@@ -175,7 +183,7 @@ end
 local function tabIcon(parent, index)
     local icon = create("Frame", {
         Name = "Icon", Size = UDim2.fromOffset(20, 20),
-        Position = UDim2.new(0, 14, 0.5, -10), BackgroundTransparency = 1, Parent = parent,
+        Position = UDim2.new(0, 10, 0.5, -10), BackgroundTransparency = 1, Parent = parent,
     })
     local parts = {}
     local variant = (index - 1) % 3
@@ -228,7 +236,7 @@ function Library.new()
     self._tasks = {}
     self._notifyStack = {}    -- active notification toasts
     self.Flags = {}
-    self.Folder = "z4rion"
+    self.Folder = "AstraHub"
     self._configData = {}
     self._flagCounts = {}
     self._saveVersion = 0
@@ -331,6 +339,70 @@ function Library:_galaxy(parent)
         end
     end)
     return sky
+end
+
+-- A fixed sidebar identity card. Thumbnail work never blocks window creation.
+function Library:_makeProfile(rail)
+    local username = LocalPlayer.Name
+    local card = create("Frame", {
+        Name = "PlayerProfile", AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 10, 1, -10), Size = UDim2.new(1, -20, 0, 70),
+        BackgroundColor3 = Theme.Panel, BackgroundTransparency = 0.12, Parent = rail,
+    })
+    corner(card, 10)
+    local rim = stroke(card, Theme.Accent)
+    rim.Transparency = 0.68
+    gradient(rim, Theme.Blue, Theme.Accent, 35)
+    local portrait = create("TextLabel", {
+        Name = "AvatarPlaceholder", Position = UDim2.fromOffset(9, 10), Size = UDim2.fromOffset(32, 32),
+        BackgroundColor3 = Theme.AccentDim, Text = string.upper(string.sub(username, 1, 1)),
+        Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = Theme.Text, Parent = card,
+    })
+    corner(portrait, 16)
+    stroke(portrait, Theme.Accent).Transparency = 0.42
+    local avatar = create("ImageLabel", {
+        Name = "Avatar", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+        Image = "", ScaleType = Enum.ScaleType.Crop, Parent = portrait,
+    })
+    corner(avatar, 16)
+    create("TextLabel", {
+        Name = "Username", Position = UDim2.fromOffset(49, 10), Size = UDim2.new(1, -58, 0, 33),
+        BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, Text = username,
+        TextSize = 11, TextColor3 = Theme.Text, TextWrapped = true, TextTruncate = Enum.TextTruncate.None,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = card,
+    })
+    create("Frame", {
+        Position = UDim2.new(0, 10, 1, -22), Size = UDim2.new(1, -20, 0, 1),
+        BackgroundColor3 = Theme.Stroke, BackgroundTransparency = 0.6, Parent = card,
+    })
+    create("TextLabel", {
+        Name = "VisibilityHint", Position = UDim2.new(0, 8, 1, -17), Size = UDim2.new(1, -16, 0, 12),
+        BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, Text = "RSHIFT / SHOW-HIDE",
+        TextSize = 8, TextColor3 = Theme.SubText, Parent = card,
+    })
+
+    local function requestAvatar(attempt)
+        if self._destroyed or not avatar:IsDescendantOf(self._screenGui) then return end
+        local thread
+        thread = task.defer(function()
+            local ok, content, ready = pcall(function()
+                return Players:GetUserThumbnailAsync(LocalPlayer.UserId,
+                    Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+            end)
+            self._tasks[thread] = nil
+            if self._destroyed or not avatar:IsDescendantOf(self._screenGui) then return end
+            if ok and ready and type(content) == "string" and content ~= "" then
+                avatar.Image = content
+                avatar.ImageTransparency = 1
+                portrait.TextTransparency = 1
+                self:_tween(avatar, SMOOTH, { ImageTransparency = 0 }):Play()
+            elseif attempt < 3 then
+                self:_delay(0.8, function() requestAvatar(attempt + 1) end)
+            end
+        end)
+        self._tasks[thread] = true
+    end
+    requestAvatar(1)
 end
 
 --// Hover descriptions --------------------------------------------------- --
@@ -442,7 +514,7 @@ end
 local function configFileName(name)
     local safe = tostring(name or "Script"):gsub('[%c<>:"/\\|?*]', "_")
     safe = safe:gsub("%s+", "_"):gsub("[%. ]+$", "")
-    return "z4rion_" .. (safe ~= "" and safe or "Script") .. ".txt"
+    return "AstraHub_" .. (safe ~= "" and safe or "Script") .. ".txt"
 end
 
 local function finite(value)
@@ -452,7 +524,7 @@ end
 local function packFlag(handle)
     local value = handle.Value
     if value == nil then
-        return { __z4rionNil = true }
+        return { __AstraHubNil = true }
     elseif handle.Type == "Colorpicker" then
         return { R = value.R * 255, G = value.G * 255, B = value.B * 255 }
     elseif handle.Type == "Bind" then
@@ -463,7 +535,7 @@ end
 
 local function unpackFlag(handle, value)
     local kind = handle.Type
-    if type(value) == "table" and value.__z4rionNil == true then
+    if type(value) == "table" and value.__AstraHubNil == true then
         assert(kind == "Bind" or kind == "Dropdown", "This control cannot be empty")
         return nil
     elseif kind == "Colorpicker" then
@@ -522,7 +594,7 @@ function Library:SaveCfg(name)
         self._configDirty = false
         return path
     end)
-    if not ok then warn("z4rion Config Saver - " .. tostring(result)) end
+    if not ok then warn("AstraHub Config Saver - " .. tostring(result)) end
     return ok, result
 end
 
@@ -540,7 +612,7 @@ function Library:_restoreFlag(flag, handle)
     self._loadingConfig = previous
     if not ok then
         self._configLoadFailed = true
-        warn("z4rion Config Loader - Could not restore " .. flag .. ": " .. tostring(err))
+        warn("AstraHub Config Loader - Could not restore " .. flag .. ": " .. tostring(err))
     end
     return ok, err
 end
@@ -556,7 +628,7 @@ function Library:LoadCfg(config)
     end)
     if not ok then
         self._configLoadFailed = true
-        warn("z4rion Config Loader - " .. tostring(data))
+        warn("AstraHub Config Loader - " .. tostring(data))
         return false, data
     end
     self._configData = data
@@ -587,7 +659,7 @@ function Library:LoadConfig(name)
     end)
     if not ok then
         self._configLoadFailed = true
-        warn("z4rion Config Loader - " .. tostring(config))
+        warn("AstraHub Config Loader - " .. tostring(config))
         return false, config
     end
     return self:LoadCfg(config)
@@ -642,8 +714,13 @@ function Library:MakeWindow(config)
     local title    = config.Name     or "Window"
     local subtitle = config.SubTitle or ""
     local credits = config.Credits or ""
+    local icon = tostring(config.Icon or config.Logo or DEFAULT_ICON)
+    if icon:match("^%d+$") then icon = "rbxassetid://" .. icon end
+    self._icon = icon:match("^rbxassetid://%d+$") and icon or DEFAULT_ICON
+    self._introPending = config.UseSplash ~= false
+    local wantedVisible = true
     self.ConfigName = config.ConfigName or title
-    self.Folder = config.ConfigFolder or "z4rion"
+    self.Folder = config.ConfigFolder or "AstraHub"
     self.SaveConfig = config.SaveConfig == true
 
     --// ScreenGui, with re-execute cleanup of any previous instance --
@@ -706,11 +783,11 @@ function Library:MakeWindow(config)
                 self:LoadConfig()
             elseif not ok then
                 self._configLoadFailed = true
-                warn("z4rion Config Loader - " .. tostring(exists))
+                warn("AstraHub Config Loader - " .. tostring(exists))
             end
         else
             self.SaveConfig = false
-            warn("z4rion Config - File functions unavailable; automatic configs disabled")
+            warn("AstraHub Config - File functions unavailable; automatic configs disabled")
         end
     end
 
@@ -752,25 +829,20 @@ function Library:MakeWindow(config)
         Name = "TitleBar", Size = UDim2.new(1, 0, 0, TITLE_HEIGHT),
         BackgroundTransparency = 1, Active = true, ZIndex = 3, Parent = main,
     })
-    local brand = create("Frame", {
-        Position = UDim2.fromOffset(18, 18), Size = UDim2.fromOffset(30, 30),
-        BackgroundColor3 = Theme.AccentDim, Parent = titleBar,
+    local brand = create("ImageLabel", {
+        Name = "GalaxyLogo", Position = UDim2.fromOffset(16, 12), Size = UDim2.fromOffset(42, 42),
+        BackgroundTransparency = 1, Image = self._icon, ScaleType = Enum.ScaleType.Fit,
+        Parent = titleBar,
     })
-    corner(brand, 9)
-    gradient(brand, Theme.Blue, Theme.Pink, 45)
-    line(brand, 15, 15, 18, 0, Theme.Text)
-    line(brand, 15, 15, 18, 90, Theme.Text)
-    line(brand, 15, 15, 11, 45, Theme.Text)
-    line(brand, 15, 15, 11, -45, Theme.Text)
     create("TextLabel", {
         Name = "Title", BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(60, 13), Size = UDim2.new(1, -166, 0, 23),
+        Position = UDim2.fromOffset(68, 13), Size = UDim2.new(1, -166, 0, 23),
         Font = Enum.Font.GothamBold, Text = title, TextColor3 = Theme.Text, TextSize = 18,
         TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar,
     })
     create("TextLabel", {
         Name = "SubTitle", BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(61, 36), Size = UDim2.new(1, -167, 0, 16),
+        Position = UDim2.fromOffset(69, 36), Size = UDim2.new(1, -167, 0, 16),
         Font = Enum.Font.Gotham, Text = subtitle, TextColor3 = Theme.SubText, TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar,
     })
@@ -818,14 +890,14 @@ function Library:MakeWindow(config)
         Parent = rail,
     })
     local sidebar = create("ScrollingFrame", {
-        Name = "Sidebar", Position = UDim2.fromOffset(6, 40),
-        Size = UDim2.new(1, -12, 1, -90), BackgroundTransparency = 1,
+        Name = "Sidebar", Position = UDim2.fromOffset(12, 42),
+        Size = UDim2.new(1, -24, 1, -132), BackgroundTransparency = 1,
         CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollingDirection = Enum.ScrollingDirection.Y, ScrollBarThickness = 2,
         ScrollBarImageColor3 = Theme.Accent, Parent = rail,
     })
     local tabList = create("Frame", {
-        Name = "Tabs", Size = UDim2.new(1, -3, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        Name = "Tabs", Position = UDim2.fromOffset(4, 0), Size = UDim2.new(1, -8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1, Parent = sidebar,
     })
     create("UIListLayout", {
@@ -837,12 +909,7 @@ function Library:MakeWindow(config)
     })
     corner(indicator, 2)
     gradient(indicator, Theme.Accent, Theme.Pink, 90)
-    create("TextLabel", {
-        BackgroundTransparency = 1, Position = UDim2.new(0, 14, 1, -34),
-        Size = UDim2.new(1, -28, 0, 20), Text = "RSHIFT   â€¢   SHOW / HIDE",
-        Font = Enum.Font.GothamMedium, TextSize = 9, TextColor3 = Theme.SubText,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = rail,
-    })
+    self:_makeProfile(rail)
     local content = create("Frame", {
         Name = "Content", Position = UDim2.fromOffset(SIDEBAR_WIDTH + 4, 12),
         Size = UDim2.new(1, -SIDEBAR_WIDTH - 18, 1, -24), BackgroundTransparency = 1,
@@ -1338,8 +1405,8 @@ function Library:MakeWindow(config)
             })
             corner(fill, 4)
             gradient(fill, fillColor, fillColor:Lerp(Color3.new(1, 1, 1), 0.3))
-            local thumb = create("Frame", {
-                Name = "Thumb", AnchorPoint = Vector2.new(0.5, 0.5),
+            local thumb = create("TextButton", {
+                Name = "Thumb", AutoButtonColor = false, Text = "", ZIndex = 3, AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.new(alphaFor(value), 0, 0.5, 0), Size = UDim2.fromOffset(14, 14),
                 BackgroundColor3 = Theme.Text, Parent = track,
             })
@@ -1348,38 +1415,35 @@ function Library:MakeWindow(config)
             halo.Transparency = 0.65
             local thumbScale = create("UIScale", { Parent = thumb })
             local catcher = create("TextButton", {
-                Name = "SliderHitArea", Position = UDim2.new(0, -6, 0.5, -15),
+                Name = "SliderHitArea", ZIndex = 2, Position = UDim2.new(0, -6, 0.5, -15),
                 Size = UDim2.new(1, 12, 0, 30), BackgroundTransparency = 1,
                 AutoButtonColor = false, Text = "", Parent = track,
             })
             local hovering, dragging = false, false
             local function emphasize()
-                lib:_tween(thumbScale, POP, { Scale = dragging and 1.35 or (hovering and 1.2 or 1) }):Play()
+                lib:_tween(thumbScale, THUMB_MOTION, { Scale = dragging and 1.55 or (hovering and 1.3 or 1) }):Play()
                 lib:_tween(halo, FAST, { Transparency = (hovering or dragging) and 0.2 or 0.65 }):Play()
                 lib:_tween(readout, FAST, { TextColor3 = (hovering or dragging) and Theme.Accent or Theme.SubText }):Play()
             end
-            lib:_connect(row.MouseEnter, function() hovering = true; emphasize() end)
-            lib:_connect(row.MouseLeave, function() hovering = false; emphasize() end)
+            lib:_connect(thumb.MouseEnter, function() hovering = true; emphasize() end)
+            lib:_connect(thumb.MouseLeave, function() hovering = false; emphasize() end)
 
             local handle = { Value = value }
 
             -- Applies a new value: updates fill + readout, fires the callback
-            -- only when the stepped value actually changes. `live` sets the
-            -- fill instantly (during drag); otherwise it tweens (on :Set).
+            -- only when the stepped value actually changes. Pointer input and
+            -- Set both glide visually while Value and callbacks stay immediate.
             local function applyValue(newValue, live, fireCallback)
                 newValue = snap(newValue)
                 local changed = (newValue ~= value)
                 value = newValue
                 handle.Value = value
                 readout.Text = formatValue(value)
-                if live then
-                    lib:_cancelTweens(fill, { Size = true })
-                    lib:_cancelTweens(thumb, { Position = true })
-                    fill.Size = UDim2.new(alphaFor(value), 0, 1, 0)
-                    thumb.Position = UDim2.new(alphaFor(value), 0, 0.5, 0)
-                else
-                    lib:_tween(fill, FAST, { Size = UDim2.new(alphaFor(value), 0, 1, 0) }):Play()
-                    lib:_tween(thumb, FAST, { Position = UDim2.new(alphaFor(value), 0, 0.5, 0) }):Play()
+                -- The logical value is immediate; only the visual thumb/fill trail.
+                -- Repeated pointer samples at the same snapped value do not restart motion.
+                if changed or not live then
+                    lib:_tween(fill, SLIDER_GLIDE, { Size = UDim2.new(alphaFor(value), 0, 1, 0) }):Play()
+                    lib:_tween(thumb, SLIDER_GLIDE, { Position = UDim2.new(alphaFor(value), 0, 0.5, 0) }):Play()
                 end
                 if changed and handle.Save then lib:_queueSave() end
                 if fireCallback and (changed or lib._loadingConfig) and cfg.Callback then
@@ -1396,15 +1460,23 @@ function Library:MakeWindow(config)
                 return min + rel * (max - min)
             end
 
-            bindDrag(catcher, function(input)
+            local function moveSlider(input)
                 applyValue(valueFromX(input.Position.X), true, true)
-            end, function()
+            end
+            local function startSlider()
                 dragging = true
                 emphasize()
-            end, function()
+            end
+            local function finishSlider()
                 dragging = false
+                local mouse, inset = UserInputService:GetMouseLocation(), GuiService:GetGuiInset()
+                local position, size = thumb.AbsolutePosition, thumb.AbsoluteSize
+                hovering = mouse.X - inset.X >= position.X and mouse.X - inset.X <= position.X + size.X
+                    and mouse.Y - inset.Y >= position.Y and mouse.Y - inset.Y <= position.Y + size.Y
                 emphasize()
-            end)
+            end
+            bindDrag(catcher, moveSlider, startSlider, finishSlider)
+            bindDrag(thumb, moveSlider, startSlider, finishSlider)
 
             handle.Set = function(v)
                 applyValue(v, false, true)
@@ -2124,8 +2196,8 @@ function Library:MakeWindow(config)
         local icon, iconParts = tabIcon(button, index)
         local iconScale = create("UIScale", { Parent = icon })
         local label = create("TextLabel", {
-            BackgroundTransparency = 1, Size = UDim2.new(1, -52, 1, 0),
-            Position = UDim2.fromOffset(43, 0), Font = Enum.Font.GothamMedium,
+            BackgroundTransparency = 1, Size = UDim2.new(1, -44, 1, 0),
+            Position = UDim2.fromOffset(37, 0), Font = Enum.Font.GothamMedium,
             Text = tabConfig.Name or "Tab", TextColor3 = Theme.SubText, TextSize = 13,
             TextXAlignment = Enum.TextXAlignment.Left, Parent = button,
         })
@@ -2207,6 +2279,17 @@ function Library:MakeWindow(config)
         ZIndex = 50,
         Parent = main,
     })
+    local gripArt = create("Frame", {
+        Name = "GripArt", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 51, Parent = resizeHandle,
+    })
+    local gripScale = create("UIScale", { Parent = gripArt })
+    self:_connect(resizeHandle.MouseEnter, function()
+        self:_tween(gripScale, THUMB_MOTION, { Scale = 1.3 }):Play()
+    end)
+    self:_connect(resizeHandle.MouseLeave, function()
+        self:_tween(gripScale, THUMB_MOTION, { Scale = 1 }):Play()
+    end)
     for index = 1, 3 do
         create("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
@@ -2216,7 +2299,7 @@ function Library:MakeWindow(config)
             BackgroundColor3 = Theme.SubText,
             BorderSizePixel = 0,
             ZIndex = 51,
-            Parent = resizeHandle,
+            Parent = gripArt,
         })
     end
     local minimized = false
@@ -2230,12 +2313,15 @@ function Library:MakeWindow(config)
         return math.max(1, size.X), math.max(1, size.Y)
     end
 
+    local fitWindow
     local function stopWindowDrag()
+        local previous = gesture
         gesture = nil
         if stateConnection then
             stateConnection:Disconnect()
             stateConnection = nil
         end
+        if previous and previous.ResumeFit and not self._destroyed then fitWindow(SMOOTH) end
     end
     self._stopWindowDrag = stopWindowDrag
 
@@ -2256,7 +2342,7 @@ function Library:MakeWindow(config)
         end
     end
 
-    local function fitWindow(tweenInfo)
+    fitWindow = function(tweenInfo)
         local viewX, viewY = viewportSize()
         lastViewportX, lastViewportY = viewX, viewY
         local marginX = math.min(screenMargin, (viewX - 1) / 2)
@@ -2265,8 +2351,8 @@ function Library:MakeWindow(config)
         local width = math.clamp(self._mainSize.X.Offset, math.min(560, maxWidth), maxWidth)
         local fullHeight = math.clamp(self._mainSize.Y.Offset, math.min(340, maxHeight), maxHeight)
         local height = minimized and math.min(TITLE_HEIGHT, maxHeight) or fullHeight
-        local left = math.clamp(main.AbsolutePosition.X, marginX, viewX - width - marginX)
-        local top = math.clamp(main.AbsolutePosition.Y, marginY, viewY - height - marginY)
+        local left = math.clamp(main.AbsolutePosition.X - screenGui.AbsolutePosition.X, marginX, viewX - width - marginX)
+        local top = math.clamp(main.AbsolutePosition.Y - screenGui.AbsolutePosition.Y, marginY, viewY - height - marginY)
         self._mainSize = UDim2.fromOffset(width, fullHeight)
         setGeometry(left, top, width, height, tweenInfo)
         return left, top, width, height
@@ -2281,10 +2367,18 @@ function Library:MakeWindow(config)
         local viewX, viewY = viewportSize()
         if not finite(pointer.X) or not finite(pointer.Y) or pointer.X < 0 or pointer.Y < 0
             or pointer.X >= viewX or pointer.Y >= viewY then return end
-        local left, top, width, height = fitWindow()
+        -- Snapshot the rendered rectangle without fitting or writing geometry.
+        -- Cancel an in-flight minimize/restore and finish it after the gesture.
+        local resumeFit = windowTween ~= nil and self._tweens[windowTween] ~= nil
+        if windowTween then windowTween:Cancel(); windowTween = nil end
+        self:_cancelTweens(main, { Size = true, Position = true })
+        local origin = screenGui.AbsolutePosition
+        local left, top = main.AbsolutePosition.X - origin.X, main.AbsolutePosition.Y - origin.Y
+        local width, height = main.AbsoluteSize.X, main.AbsoluteSize.Y
         self:_hideHoverTip()
         gesture = { Input = input, Touch = touch, Resizing = resizing,
-            X = pointer.X, Y = pointer.Y, Left = left, Top = top, Width = width, Height = height }
+            X = pointer.X, Y = pointer.Y, LastX = pointer.X, LastY = pointer.Y,
+            Left = left, Top = top, Width = width, Height = height, ResumeFit = resumeFit }
         stateConnection = input:GetPropertyChangedSignal("UserInputState"):Connect(function()
             if input.UserInputState == Enum.UserInputState.End
                 or input.UserInputState == Enum.UserInputState.Cancel then
@@ -2342,6 +2436,8 @@ function Library:MakeWindow(config)
         end
         -- Always measure from the original press; repeated frames cannot grow
         -- the window unless the pointer itself actually moves.
+        if pointer.X == drag.LastX and pointer.Y == drag.LastY then return end
+        drag.LastX, drag.LastY = pointer.X, pointer.Y
         local dx, dy = pointer.X - drag.X, pointer.Y - drag.Y
         if drag.Resizing then
             local maxWidth = math.max(1, viewX - screenMargin - drag.Left)
@@ -2381,7 +2477,10 @@ function Library:MakeWindow(config)
         if UserInputService:GetFocusedTextBox() then return end
         if input.KeyCode == Enum.KeyCode.RightShift then
             stopWindowDrag()
-            main.Visible = not main.Visible
+            wantedVisible = not wantedVisible
+            if self._cancelIntro then self._cancelIntro() end
+            main.Visible = wantedVisible
+            if wantedVisible then fitWindow() end
 
             local closeOrShown = main.Visible and "Shown" or "Closed"
             local hideOrShow = main.Visible and "hide" or "open"
@@ -2389,14 +2488,15 @@ function Library:MakeWindow(config)
         end
     end)
 
-    --// Intro splash, then reveal the window --
-    self:_playIntro(function()
+    -- The splash is optional and never waits for image loading. Main-window
+    -- geometry stays unscaled so grabbing it cannot capture a transient UIScale.
+    local function revealWindow()
         if self._destroyed then return end
-        main.Visible = true
+        self._introPending = false
         fitWindow()
-        local reveal = create("UIScale", { Scale = 0.96, Parent = main })
-        self:_tween(reveal, POP, { Scale = 1 }):Play()
-    end)
+        main.Visible = wantedVisible
+    end
+    if self._introPending then self:_playIntro(revealWindow) else revealWindow() end
 
     self:_queueSave()
     return window
@@ -2404,46 +2504,106 @@ end
 
 
 --// Intro splash --------------------------------------------------------- --
--- Brief native-UI welcome card; every delayed stage belongs to the library.
+-- A short entrance sequence, not a loading meter. No image preload can block it.
 function Library:_playIntro(onDone)
+    local camera = Workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or self._screenGui.AbsoluteSize
+    local width, height = math.min(440, math.max(1, viewport.X - 24)), math.min(252, math.max(1, viewport.Y - 24))
     local splash = create("CanvasGroup", {
-        Name = "Intro", AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(340, 108),
-        BackgroundColor3 = Theme.Background, GroupTransparency = 1, ZIndex = 60,
-        Parent = self._screenGui,
+        Name = "Intro", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(width, height), BackgroundTransparency = 1,
+        GroupTransparency = 1, ZIndex = 60, Parent = self._screenGui,
     })
-    corner(splash, 14)
-    local rim = stroke(splash, Theme.Accent)
-    rim.Transparency = 0.3
-    gradient(rim, Theme.Blue, Theme.Pink)
-    local accent = create("Frame", {
-        Size = UDim2.new(1, -48, 0, 2), Position = UDim2.fromOffset(24, 81),
-        BackgroundColor3 = Theme.Accent, Parent = splash,
+    local card = create("Frame", {
+        Name = "SplashCard", Position = UDim2.fromOffset(2, 2), Size = UDim2.new(1, -4, 1, -4),
+        BackgroundColor3 = Color3.new(1, 1, 1), ClipsDescendants = true, Parent = splash,
     })
-    gradient(accent, Theme.Blue, Theme.Pink)
+    corner(card, 16)
+    gradient(card, Color3.fromRGB(8, 6, 17), Color3.fromRGB(39, 18, 65), 65)
+    local rim = stroke(card, Theme.Accent)
+    rim.Transparency = 0.45
+    gradient(rim, Theme.Blue, Theme.Pink, 20)
+    for index = 1, 12 do
+        local star = create("Frame", {
+            Position = UDim2.fromScale((index * 0.173) % 1, (index * 0.317) % 1),
+            Size = UDim2.fromOffset(index % 3 == 0 and 2 or 1, index % 3 == 0 and 2 or 1),
+            BackgroundColor3 = Theme.Accent, BackgroundTransparency = 0.72, Parent = card,
+        })
+        corner(star, 2)
+    end
     create("TextLabel", {
-        BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 22),
-        Size = UDim2.new(1, -48, 0, 26), Font = Enum.Font.GothamBold,
-        Text = guiTitle or "", TextColor3 = Theme.Text, TextSize = 22,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = splash,
+        Name = "Eyebrow", Position = UDim2.new(0, 24, 0, 19), Size = UDim2.new(1, -48, 0, 14),
+        BackgroundTransparency = 1, Font = Enum.Font.GothamMedium,
+        Text = "YOUR WORKSPACE", TextSize = 9, TextColor3 = Theme.SubText, Parent = card,
+    })
+    local orbit = create("Frame", {
+        Name = "Orbit", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, 94),
+        Size = UDim2.fromOffset(112, 76), BackgroundTransparency = 1, Rotation = -22, Parent = card,
+    })
+    corner(orbit, 100)
+    stroke(orbit, Theme.Accent).Transparency = 0.77
+    local logo = create("ImageLabel", {
+        Name = "GalaxyLogo", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, 94),
+        Size = UDim2.fromOffset(84, 84), BackgroundTransparency = 1,
+        Image = self._icon, ScaleType = Enum.ScaleType.Fit, Parent = card,
+    })
+    local logoScale = create("UIScale", { Scale = 0.86, Parent = logo })
+    create("TextLabel", {
+        Name = "Title", BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 148),
+        Size = UDim2.new(1, -48, 0, 29), Font = Enum.Font.GothamBold,
+        Text = guiTitle or "", TextColor3 = Theme.Text, TextSize = 23, Parent = card,
     })
     create("TextLabel", {
-        BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 54),
+        Name = "SubTitle", BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 181),
         Size = UDim2.new(1, -48, 0, 18), Font = Enum.Font.Gotham,
-        Text = guiCredits ~= "" and ("Credits: " .. guiCredits) or (guiSubtitle or ""),
-        TextColor3 = Theme.SubText, TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = splash,
+        Text = guiSubtitle ~= "" and guiSubtitle or (guiCredits ~= "" and ("By " .. guiCredits) or "Welcome"),
+        TextColor3 = Theme.SubText, TextSize = 11, Parent = card,
     })
-    local scale = create("UIScale", { Scale = 0.94, Parent = splash })
-    self:_tween(splash, SMOOTH, { GroupTransparency = 0 }):Play()
-    self:_tween(scale, POP, { Scale = 1 }):Play()
-    self:_delay(0.65, function()
-        self:_tween(splash, FAST, { GroupTransparency = 1 }):Play()
-        self:_delay(0.16, function()
-            splash:Destroy()
+    if guiCredits ~= "" then
+        create("TextLabel", {
+            Name = "Credits", BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 203),
+            Size = UDim2.new(1, -48, 0, 13), Font = Enum.Font.Gotham,
+            Text = "By " .. guiCredits, TextColor3 = Theme.SubText, TextSize = 9, Parent = card,
+        })
+    end
+    local lineTrack = create("Frame", {
+        Position = UDim2.new(0, 32, 1, -26), Size = UDim2.new(1, -64, 0, 1),
+        BackgroundColor3 = Theme.Stroke, BackgroundTransparency = 0.5, ClipsDescendants = true, Parent = card,
+    })
+    local glint = create("Frame", {
+        Position = UDim2.fromOffset(-72, 0), Size = UDim2.fromOffset(72, 1),
+        BackgroundColor3 = Theme.Accent, Parent = lineTrack,
+    })
+    gradient(glint, Theme.Blue, Theme.Pink)
+    self:_tween(splash, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
+    self:_tween(logoScale, TweenInfo.new(0.55, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+    self:_tween(orbit, TweenInfo.new(1.05, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { Rotation = -8 }):Play()
+    self:_tween(glint, TweenInfo.new(1.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { Position = UDim2.new(1, 0, 0, 0) }):Play()
+    local ended, threads = false, {}
+    local function cancel()
+        if ended then return end
+        ended = true
+        self._introPending = false
+        for _, thread in ipairs(threads) do
+            if self._tasks[thread] then task.cancel(thread); self._tasks[thread] = nil end
+        end
+        self:_cancelTweens(splash)
+        self:_cancelTweens(logoScale)
+        self:_cancelTweens(orbit)
+        self:_cancelTweens(glint)
+        splash:Destroy()
+        self._cancelIntro = nil
+    end
+    self._cancelIntro = cancel
+    table.insert(threads, self:_delay(1.05, function()
+        if ended then return end
+        self:_tween(splash, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 1 }):Play()
+        table.insert(threads, self:_delay(0.25, function()
+            if ended then return end
+            cancel()
             if onDone then onDone() end
-        end)
-    end)
+        end))
+    end))
 end
 
 --// Notifications -------------------------------------------------------- --
@@ -2464,22 +2624,26 @@ function Library:MakeNotification(title, desc, time)
     })
     local toast = create("CanvasGroup", {
         Name = "Toast", Size = UDim2.fromScale(1, 1), Position = UDim2.fromOffset(30, 0),
-        BackgroundColor3 = Theme.Panel, GroupTransparency = 1, Parent = slot,
+        BackgroundTransparency = 1, GroupTransparency = 1, Parent = slot,
     })
-    corner(toast, 12)
-    local rim = stroke(toast, Theme.Accent)
+    local card = create("Frame", {
+        Name = "ToastCard", Position = UDim2.fromOffset(2, 2), Size = UDim2.new(1, -4, 1, -4),
+        BackgroundColor3 = Theme.Panel, Parent = toast,
+    })
+    corner(card, 12)
+    local rim = stroke(card, Theme.Accent)
     rim.Transparency = 0.48
     gradient(rim, Theme.Blue, Theme.Pink, 15)
     local bar = create("Frame", {
         Position = UDim2.fromOffset(0, 14), Size = UDim2.new(0, 3, 1, -28),
-        BackgroundColor3 = Theme.Accent, Parent = toast,
+        BackgroundColor3 = Theme.Accent, Parent = card,
     })
     gradient(bar, Theme.Accent, Theme.Pink, 90)
     create("TextLabel", {
         BackgroundTransparency = 1, Position = UDim2.fromOffset(17, 12),
         Size = UDim2.new(1, -34, 0, 20), Font = Enum.Font.GothamBold,
         Text = title, TextColor3 = Theme.Text, TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = toast,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = card,
     })
     create("TextLabel", {
         BackgroundTransparency = 1, Position = UDim2.fromOffset(17, 36),
@@ -2487,9 +2651,9 @@ function Library:MakeNotification(title, desc, time)
         Text = desc, TextColor3 = Theme.SubText, TextSize = 12, TextWrapped = true,
         TextTruncate = Enum.TextTruncate.None,
         TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-        Parent = toast,
+        Parent = card,
     })
-    self:_tween(toast, SMOOTH, { Position = UDim2.fromOffset(0, 0), GroupTransparency = 0 }):Play()
+    self:_tween(toast, TOAST_ENTER, { Position = UDim2.fromOffset(0, 0), GroupTransparency = 0 }):Play()
     self:_delay(time, function()
         self:_tween(toast, SMOOTH, { Position = UDim2.fromOffset(30, 0), GroupTransparency = 1 }):Play()
         self:_delay(0.22, function() slot:Destroy() end)
@@ -2500,6 +2664,7 @@ end
 -- Destroys the GUI and disconnects every library-owned connection.
 function Library:Destroy()
     if self._destroyed then return end
+    if self._cancelIntro then self._cancelIntro() end
     if self._stopWindowDrag then self._stopWindowDrag() end
     if self._stopControlDrag then self._stopControlDrag() end
     if self.SaveConfig and self._configDirty and not self._configLoadFailed then
