@@ -47,7 +47,7 @@
 --
 --    Library:MakeNotification('Title', 'Body', 3)
 --    Library:MakeNotification({ Name = 'Title', Content = 'Body', Time = 3 })
---    RightShift toggles window visibility.  Library:Destroy() tears it all down.
+--    RightShift fades window visibility.  Library:Destroy() tears it all down.
 --  Drag the bottom-right grip to resize; size stays within the screen bounds.
 --  Releasing, leaving the screen, or losing client focus ends the drag.
 --============================================================================--
@@ -296,7 +296,7 @@ end
 -- One inexpensive, throttled clock drives the decorative starfield.
 function Library:_galaxy(parent)
     local sky = create("Frame", {
-        Name = "Galaxy", Size = UDim2.fromScale(1, 1), ClipsDescendants = true,
+        Name = "Galaxy", Position = UDim2.fromOffset(2, 2), Size = UDim2.new(1, -4, 1, -4), ClipsDescendants = true,
         BackgroundColor3 = Color3.new(1, 1, 1), ZIndex = 1, Parent = parent,
     })
     corner(sky, 16)
@@ -327,7 +327,7 @@ function Library:_galaxy(parent)
     end
     local elapsed, accumulator = 0, 0
     self:_connect(RunService.RenderStepped, function(dt)
-        if not parent.Visible or not self._screenGui.Enabled or self._minimized then return end
+        if not parent.Visible or self._windowWantedVisible == false or not self._screenGui.Enabled or self._minimized then return end
         elapsed, accumulator = elapsed + dt, accumulator + dt
         if accumulator < 1 / 30 then return end
         accumulator = 0
@@ -413,7 +413,7 @@ function Library:_hideHoverTip()
 end
 
 function Library:_canShowHoverTip(row)
-    if self._destroyed or not row.Parent or not self._screenGui.Enabled then return false end
+    if self._destroyed or self._windowWantedVisible == false or not row.Parent or not self._screenGui.Enabled then return false end
     local mouse = UserInputService:GetMouseLocation()
     local function contains(object)
         local position, size = object.AbsolutePosition, object.AbsoluteSize
@@ -719,6 +719,7 @@ function Library:MakeWindow(config)
     self._icon = icon:match("^rbxassetid://%d+$") and icon or DEFAULT_ICON
     self._introPending = config.UseSplash ~= false
     local wantedVisible = true
+    self._windowWantedVisible = true
     self.ConfigName = config.ConfigName or title
     self.Folder = config.ConfigFolder or "AstraHub"
     self.SaveConfig = config.SaveConfig == true
@@ -813,17 +814,22 @@ function Library:MakeWindow(config)
 
     --// Spacious galaxy shell -------------------------------------------- --
     local mainSize = UDim2.fromOffset(740, 500)
-    local main = create("Frame", {
+    local main = create("CanvasGroup", {
         Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5), Size = mainSize,
-        BackgroundColor3 = Theme.Background, Visible = false, Parent = screenGui,
+        BackgroundTransparency = 1, GroupTransparency = 1, Visible = false, Parent = screenGui,
     })
     corner(main, 16)
-    local rim = stroke(main, Theme.Accent, 1)
+    self._main, self._mainSize = main, mainSize
+    local surface = self:_galaxy(main)
+    -- The stroke belongs to a descendant, so it fades with every other pixel.
+    local rim = stroke(surface, Theme.Accent, 1)
     rim.Transparency = 0.5
     gradient(rim, Theme.Blue, Theme.Pink, 25)
-    self._main, self._mainSize = main, mainSize
-    self:_galaxy(main)
+    local fadeBlocker = create("TextButton", {
+        Name = "FadeInputBlocker", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+        AutoButtonColor = false, Text = "", Active = true, Visible = false, ZIndex = 100, Parent = main,
+    })
 
     local titleBar = create("Frame", {
         Name = "TitleBar", Size = UDim2.new(1, 0, 0, TITLE_HEIGHT),
@@ -931,6 +937,7 @@ function Library:MakeWindow(config)
     self._stopControlDrag = stopControlDrag
     local function bindDrag(grabber, onMove, onBegin, onFinish)
         self:_connect(grabber.InputBegan, function(input)
+            if not wantedVisible or not main.Visible or not screenGui.Enabled then return end
             if input.UserInputType ~= Enum.UserInputType.MouseButton1
                 and input.UserInputType ~= Enum.UserInputType.Touch then return end
             stopControlDrag()
@@ -2363,7 +2370,7 @@ function Library:MakeWindow(config)
     end
 
     local function beginWindowDrag(input, resizing)
-        if self._destroyed or not main.Visible or not screenGui.Enabled or (resizing and minimized) then return end
+        if self._destroyed or not wantedVisible or not main.Visible or not screenGui.Enabled or (resizing and minimized) then return end
         local touch = input.UserInputType == Enum.UserInputType.Touch
         if not touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
         stopWindowDrag()
@@ -2476,18 +2483,64 @@ function Library:MakeWindow(config)
         self:Destroy()
     end)
 
-    --// RightShift toggles window visibility --
+    -- One reversible opacity tween owns visibility. Geometry is never animated
+    -- by this path, and completion cannot hide a subsequently reopened window.
+    local fadeCompletion
+    local function cancelWindowFade()
+        if fadeCompletion then fadeCompletion:Disconnect(); fadeCompletion = nil end
+        self:_cancelTweens(main, { GroupTransparency = true })
+    end
+    self._cancelWindowFade = cancelWindowFade
+    local function setWindowVisible(visible)
+        if self._destroyed then return end
+        wantedVisible = visible
+        self._windowWantedVisible = visible
+        if self._cancelIntro then self._cancelIntro() end
+        stopWindowDrag()
+        stopControlDrag()
+        self:_hideHoverTip()
+        cancelWindowFade()
+        fadeBlocker.Visible = not visible
+        if visible then
+            if not main.Visible then fitWindow(); main.Visible = true end
+        elseif not main.Visible then
+            main.GroupTransparency = 1
+            fadeBlocker.Visible = false
+            return
+        end
+        local target = visible and 0 or 1
+        -- A full fade takes 0.28 seconds; reversing uses the remaining distance.
+        local duration = 0.28 * math.abs(main.GroupTransparency - target)
+        if duration < 0.001 then
+            main.GroupTransparency = target
+            main.Visible = visible
+            fadeBlocker.Visible = false
+            return
+        end
+        local tween = self:_tween(main, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            GroupTransparency = target,
+        })
+        local connection
+        connection = tween.Completed:Connect(function(state)
+            connection:Disconnect()
+            if fadeCompletion == connection then fadeCompletion = nil end
+            if state == Enum.PlaybackState.Completed and not self._destroyed and wantedVisible == visible then
+                main.Visible = visible
+                fadeBlocker.Visible = false
+            end
+        end)
+        fadeCompletion = connection
+        tween:Play()
+    end
+
+    --// RightShift toggles logical visibility, including during a fade --
     self:_connect(UserInputService.InputBegan, function(input, gameProcessed)
         if UserInputService:GetFocusedTextBox() then return end
         if input.KeyCode == Enum.KeyCode.RightShift then
-            stopWindowDrag()
-            wantedVisible = not wantedVisible
-            if self._cancelIntro then self._cancelIntro() end
-            main.Visible = wantedVisible
-            if wantedVisible then fitWindow() end
+            setWindowVisible(not wantedVisible)
 
-            local closeOrShown = main.Visible and "Shown" or "Closed"
-            local hideOrShow = main.Visible and "hide" or "open"
+            local closeOrShown = wantedVisible and "Shown" or "Closed"
+            local hideOrShow = wantedVisible and "hide" or "open"
             self:MakeNotification("Window " .. closeOrShown, "RightShift to " .. hideOrShow .. " the window again.", 3)
         end
     end)
@@ -2497,8 +2550,7 @@ function Library:MakeWindow(config)
     local function revealWindow()
         if self._destroyed then return end
         self._introPending = false
-        fitWindow()
-        main.Visible = wantedVisible
+        setWindowVisible(wantedVisible)
     end
     if self._introPending then self:_playIntro(revealWindow) else revealWindow() end
 
@@ -2668,6 +2720,7 @@ end
 -- Destroys the GUI and disconnects every library-owned connection.
 function Library:Destroy()
     if self._destroyed then return end
+    if self._cancelWindowFade then self._cancelWindowFade() end
     if self._cancelIntro then self._cancelIntro() end
     if self._stopWindowDrag then self._stopWindowDrag() end
     if self._stopControlDrag then self._stopControlDrag() end
