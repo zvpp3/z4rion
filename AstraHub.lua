@@ -885,7 +885,7 @@ function Library:MakeWindow(config)
     stroke(rail).Transparency = 0.7
     create("TextLabel", {
         BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 14),
-        Size = UDim2.new(1, -28, 0, 14), Text = "TABS", Font = Enum.Font.GothamBold,
+        Size = UDim2.new(1, -28, 0, 14), Text = "WORKSPACE", Font = Enum.Font.GothamBold,
         TextSize = 9, TextColor3 = Theme.SubText, TextXAlignment = Enum.TextXAlignment.Left,
         Parent = rail,
     })
@@ -900,11 +900,15 @@ function Library:MakeWindow(config)
         Name = "Tabs", Position = UDim2.fromOffset(4, 0), Size = UDim2.new(1, -8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1, Parent = sidebar,
     })
+    -- Keep the first/last tab strokes inside the scrolling viewport.
+    create("UIPadding", {
+        PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = tabList,
+    })
     create("UIListLayout", {
         Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = tabList,
     })
     local indicator = create("Frame", {
-        Name = "SelectedTab", Position = UDim2.fromOffset(1, 9), Size = UDim2.fromOffset(3, 24),
+        Name = "SelectedTab", Position = UDim2.fromOffset(1, 15), Size = UDim2.fromOffset(3, 24),
         BackgroundColor3 = Theme.Accent, ZIndex = 4, Parent = sidebar,
     })
     corner(indicator, 2)
@@ -2178,7 +2182,7 @@ function Library:MakeWindow(config)
             paintTab(tab)
         end
         lib:_tween(indicator, POP, {
-            Position = UDim2.fromOffset(1, (target.Index - 1) * 48 + 9),
+            Position = UDim2.fromOffset(1, (target.Index - 1) * 48 + 15),
         }):Play()
     end
 
