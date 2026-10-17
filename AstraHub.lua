@@ -3,7 +3,7 @@
 --
 --  Setup:
 --    local Library = loadstring(game:HttpGet('YOUR_RAW_URL'))()
---    local Window  = Library:MakeWindow({ Name = 'Egg Farm', SubTitle = 'by zvppe' })
+--    local Window  = Library:MakeWindow({ Name = 'AstraHub', SubTitle = 'by zvppe' })
 --    local Tab     = Window:MakeTab({ Name = 'Main' })
 --    local Section = Tab:AddSection({ Name = 'Main' })
 --
@@ -101,7 +101,7 @@ local POP    = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.O
 local SLIDER_GLIDE = TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local THUMB_MOTION = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local TOAST_ENTER = TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-local DEFAULT_ICON = "rbxassetid://134705462875606"
+local DEFAULT_ICON = "rbxassetid://87317389654710"
 local TITLE_HEIGHT = 64
 local SIDEBAR_WIDTH = 176
 
@@ -2595,7 +2595,7 @@ function Library:_playIntro(onDone)
         self._cancelIntro = nil
     end
     self._cancelIntro = cancel
-    table.insert(threads, self:_delay(1.05, function()
+    table.insert(threads, self:_delay(3, function()
         if ended then return end
         self:_tween(splash, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 1 }):Play()
         table.insert(threads, self:_delay(0.25, function()
