@@ -12,6 +12,7 @@
 --    :AddLabel(text | { Name, Expandable = false })           -> { Set(text) }
 --    :AddParagraph({ Name, Content, Expandable = false })     -> { Set(content) }
 --  Expandable text starts closed; handles also expose SetExpanded(bool), Expanded.
+--  Its left arrow shows ">" when closed and "<" when open.
 --    :AddButton({ Name, Callback })                          -> { Set(text) }
 --    :AddToggle({ Name, Default, Callback })                 -> { Set(bool), Value }
 --    :AddSlider({ Name, Min, Max, Increment, Default,
@@ -31,6 +32,8 @@
 --  z4rion_<ConfigName>.txt and contain JSON. Requires executor file functions.
 --  Value controls accept Flag (unique stable ID) and SaveConfig (false by default).
 --  Set SaveConfig = true on BOTH the window and each control to opt into saving.
+--  All element config tables accept HoverTip = "". Nonempty tips appear above
+--  the mouse after two seconds of hovering, and disappear when you leave.
 --  Without Flag, IDs are generated from the tab/section/control names.
 --    Library:SaveCfg() / Library:SaveConfigFile() -> success, path/error
 --    Library:LoadConfig()                       -> success, error
@@ -56,6 +59,7 @@ local UserInputService   = game:GetService("UserInputService")
 local TweenService       = game:GetService("TweenService")
 local RunService         = game:GetService("RunService")
 local HttpService        = game:GetService("HttpService")
+local TextService        = game:GetService("TextService")
 
 local LocalPlayer = Players.LocalPlayer
 local guiTitle, guiSubtitle, guiCredits
@@ -159,6 +163,109 @@ function Library:_connect(signal, callback)
     local connection = signal:Connect(callback)
     table.insert(self._connections, connection)
     return connection
+end
+
+--// Hover descriptions --------------------------------------------------- --
+function Library:_hideHoverTip()
+    self._hoverVersion = (self._hoverVersion or 0) + 1
+    self._hoverTarget = nil
+    if self._hoverTip then self._hoverTip.Visible = false end
+end
+
+function Library:_canShowHoverTip(row)
+    if self._destroyed or not row.Parent or not self._screenGui.Enabled then return false end
+    local mouse = UserInputService:GetMouseLocation()
+    local function contains(object)
+        local position, size = object.AbsolutePosition, object.AbsoluteSize
+        return mouse.X >= position.X and mouse.X <= position.X + size.X
+            and mouse.Y >= position.Y and mouse.Y <= position.Y + size.Y
+    end
+    if not contains(row) then return false end
+    local ancestor = row
+    while ancestor and ancestor ~= self._screenGui do
+        if ancestor:IsA("GuiObject") then
+            if not ancestor.Visible then return false end
+            if ancestor.ClipsDescendants and not contains(ancestor) then return false end
+        end
+        ancestor = ancestor.Parent
+    end
+    return ancestor == self._screenGui
+end
+
+function Library:_positionHoverTip()
+    local tip = self._hoverTip
+    local mouse = UserInputService:GetMouseLocation()
+    local camera = Workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or self._screenGui.AbsoluteSize
+    local width, height = tip.Size.X.Offset, tip.Size.Y.Offset
+    local x = math.clamp(mouse.X + 12, 8, math.max(8, viewport.X - width - 8))
+    local y = math.clamp(mouse.Y - 12, height + 8, math.max(height + 8, viewport.Y - 8))
+    tip.Position = UDim2.fromOffset(x, y)
+end
+
+function Library:_attachHoverTip(row, cfg)
+    local text = type(cfg.HoverTip) == "string" and cfg.HoverTip or ""
+    if text == "" then return end
+    if not self._hoverTip then
+        local tip = create("TextLabel", {
+            Name = "HoverTip",
+            AnchorPoint = Vector2.new(0, 1),
+            Size = UDim2.fromOffset(1, 1),
+            BackgroundColor3 = Theme.PanelLight,
+            BorderSizePixel = 0,
+            Font = Enum.Font.Gotham,
+            Text = "",
+            TextSize = 12,
+            TextColor3 = Theme.Text,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            Active = false,
+            Selectable = false,
+            Visible = false,
+            ZIndex = 1000,
+            Parent = self._screenGui,
+        })
+        corner(tip, 6)
+        stroke(tip)
+        pad(tip, 8)
+        self._hoverTip = tip
+        self:_connect(RunService.RenderStepped, function()
+            if not self._hoverTarget then return end
+            if not self:_canShowHoverTip(self._hoverTarget) then
+                self:_hideHoverTip()
+            elseif tip.Visible then
+                self:_positionHoverTip()
+            end
+        end)
+    end
+    self:_connect(row.MouseEnter, function()
+        self:_hideHoverTip()
+        self._hoverTarget = row
+        local version = self._hoverVersion
+        task.delay(2, function()
+            if version ~= self._hoverVersion or self._hoverTarget ~= row then return end
+            if not self:_canShowHoverTip(row) then
+                self:_hideHoverTip()
+                return
+            end
+            local camera = Workspace.CurrentCamera
+            local viewport = camera and camera.ViewportSize or self._screenGui.AbsoluteSize
+            local width = math.max(40, math.min(300, viewport.X - 32))
+            local bounds = TextService:GetTextSize(text, 12, Enum.Font.Gotham,
+                Vector2.new(width - 16, 100000))
+            local tip = self._hoverTip
+            tip.Text = text
+            tip.Size = UDim2.fromOffset(math.ceil(bounds.X) + 16, math.ceil(bounds.Y) + 16)
+            self:_positionHoverTip()
+            tip.Visible = true
+        end)
+    end)
+    local function leave()
+        if self._hoverTarget == row then self:_hideHoverTip() end
+    end
+    self:_connect(row.MouseLeave, leave)
+    self:_connect(row.Destroying, leave)
 end
 
 --// Configs -------------------------------------------------------------- --
@@ -638,6 +745,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(panel, 8)
+            lib:_attachHoverTip(panel, cfg)
             local content = panel
             local header, arrow
             if expandable then
@@ -651,14 +759,15 @@ function Library:MakeWindow(config)
                 })
                 arrow = create("TextLabel", {
                     Name = "Arrow",
-                    AnchorPoint = Vector2.new(0.5, 0.5),
-                    Position = UDim2.fromScale(0.5, 0.5),
+                    AnchorPoint = Vector2.new(0, 0.5),
+                    Position = UDim2.new(0, 10, 0.5, 0),
                     Size = UDim2.fromOffset(18, 18),
                     BackgroundTransparency = 1,
                     Font = Enum.Font.GothamBold,
-                    Text = "\u{2304}",
+                    Text = ">",
                     TextSize = 18,
                     TextColor3 = Theme.SubText,
+                    TextXAlignment = Enum.TextXAlignment.Left,
                     Rotation = 0,
                     Parent = header,
                 })
@@ -666,14 +775,14 @@ function Library:MakeWindow(config)
                     Name = "TextContent",
                     Position = UDim2.new(0, padding, 0, headerH + padding),
                     Size = UDim2.new(1, -2 * padding, 0, 0),
-                    AutomaticSize = Enum.AutomaticSize.Y,
+                    AutomaticSize = Enum.AutomaticSize.None,
                     BackgroundTransparency = 1,
                     Parent = panel,
                 })
             else
                 pad(panel, padding)
             end
-            local layout = create("UIListLayout", {
+            create("UIListLayout", {
                 FillDirection = Enum.FillDirection.Vertical,
                 Padding = UDim.new(0, 4),
                 SortOrder = Enum.SortOrder.LayoutOrder,
@@ -686,7 +795,7 @@ function Library:MakeWindow(config)
                     LayoutOrder = 1,
                     BackgroundTransparency = 1,
                     Size = UDim2.new(1, 0, 0, expandable and 0 or 18),
-                    AutomaticSize = expandable and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
+                    AutomaticSize = Enum.AutomaticSize.None,
                     Font = Enum.Font.GothamBold,
                     Text = cfg.Name or "",
                     TextColor3 = Theme.Text,
@@ -703,7 +812,7 @@ function Library:MakeWindow(config)
                 LayoutOrder = 2,
                 BackgroundTransparency = 1,
                 Size = UDim2.new(1, 0, 0, 0),
-                AutomaticSize = Enum.AutomaticSize.Y,
+                AutomaticSize = expandable and Enum.AutomaticSize.None or Enum.AutomaticSize.Y,
                 Font = Enum.Font.Gotham,
                 Text = paragraph and (cfg.Content or "") or (cfg.Name or ""),
                 TextColor3 = Theme.SubText,
@@ -724,11 +833,26 @@ function Library:MakeWindow(config)
             if expandable then
                 local sizeTween, arrowTween
                 local textTweens = {}
+                local function measureText()
+                    local width = panel.AbsoluteSize.X - 2 * padding
+                    if width <= 0 then return 0 end
+                    local height = 0
+                    for index, label in ipairs(textLabels) do
+                        local bounds = TextService:GetTextSize(label.Text, label.TextSize,
+                            label.Font, Vector2.new(width, 100000))
+                        local textHeight = label.Text == "" and 0 or math.ceil(bounds.Y) + 2
+                        label.Size = UDim2.new(1, 0, 0, textHeight)
+                        height = height + textHeight + (index > 1 and 4 or 0)
+                    end
+                    content.Size = UDim2.new(1, -2 * padding, 0, height)
+                    return height
+                end
                 local function resize()
+                    local textHeight = measureText()
                     if sizeTween then sizeTween:Cancel() end
                     local height = headerH
                     if handle.Expanded then
-                        height = height + layout.AbsoluteContentSize.Y + 2 * padding
+                        height = height + textHeight + 2 * padding
                     end
                     sizeTween = TweenService:Create(panel, SMOOTH, { Size = UDim2.new(1, 0, 0, height) })
                     sizeTween:Play()
@@ -738,9 +862,10 @@ function Library:MakeWindow(config)
                     if first == handle then open = second end
                     handle.Expanded = open == true
                     resize()
+                    arrow.Text = handle.Expanded and "<" or ">"
                     if arrowTween then arrowTween:Cancel() end
                     arrowTween = TweenService:Create(arrow, SMOOTH, {
-                        Rotation = handle.Expanded and 180 or 0,
+                        TextColor3 = handle.Expanded and Theme.Accent or Theme.SubText,
                     })
                     arrowTween:Play()
                     for index, label in ipairs(textLabels) do
@@ -754,10 +879,18 @@ function Library:MakeWindow(config)
                 header.Activated:Connect(function()
                     handle.SetExpanded(not handle.Expanded)
                 end)
-                -- Recompute the tween target when wrapped text changes or the
-                -- page becomes visible at a different width, including Set().
-                lib:_connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
-                    if handle.Expanded then resize() end
+                -- Measure directly: clipped automatic layouts may report zero
+                -- height. Remeasure when text changes or a hidden tab is shown.
+                for _, label in ipairs(textLabels) do
+                    lib:_connect(label:GetPropertyChangedSignal("Text"), resize)
+                end
+                local lastWidth = panel.AbsoluteSize.X
+                lib:_connect(panel:GetPropertyChangedSignal("AbsoluteSize"), function()
+                    local width = panel.AbsoluteSize.X
+                    if width ~= lastWidth then
+                        lastWidth = width
+                        resize()
+                    end
                 end)
             end
             return handle
@@ -789,6 +922,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(btn, 8)
+            lib:_attachHoverTip(btn, cfg)
             attachHover(btn, Theme.PanelLight, Theme.Hover)
 
             btn.MouseButton1Click:Connect(function()
@@ -822,6 +956,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(row, 8)
+            lib:_attachHoverTip(row, cfg)
             pad(row, 8)
 
             create("TextLabel", {
@@ -938,6 +1073,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(row, 8)
+            lib:_attachHoverTip(row, cfg)
 
             create("TextLabel", {
                 BackgroundTransparency = 1,
@@ -1055,6 +1191,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(container2, 8)
+            lib:_attachHoverTip(container2, cfg)
             attachHover(container2, Theme.PanelLight, Theme.Hover)
 
             local header = create("TextButton", {
@@ -1233,6 +1370,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(container2, 8)
+            lib:_attachHoverTip(container2, cfg)
             attachHover(container2, Theme.PanelLight, Theme.Hover)
 
             local header = create("TextButton", {
@@ -1392,6 +1530,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(row, 8)
+            lib:_attachHoverTip(row, cfg)
 
             create("TextLabel", {
                 BackgroundTransparency = 1,
@@ -1508,6 +1647,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(row, 8)
+            lib:_attachHoverTip(row, cfg)
 
             create("TextLabel", {
                 BackgroundTransparency = 1,
@@ -1592,6 +1732,7 @@ function Library:MakeWindow(config)
                 Parent = container,
             })
             corner(container2, 8)
+            lib:_attachHoverTip(container2, cfg)
             attachHover(container2, Theme.PanelLight, Theme.Hover)
 
             local header = create("TextButton", {
@@ -2167,6 +2308,7 @@ function Library:Destroy()
     if self.SaveConfig and self._configDirty and not self._configLoadFailed then
         self:SaveCfg()
     end
+    self:_hideHoverTip()
     self._destroyed = true
     self._saveVersion = self._saveVersion + 1
     for _, connection in ipairs(self._connections) do
