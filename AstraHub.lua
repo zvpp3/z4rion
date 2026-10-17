@@ -2621,13 +2621,13 @@ function Library:_playIntro(onDone)
         Name = "SubTitle", BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 181),
         Size = UDim2.new(1, -48, 0, 18), Font = Enum.Font.Gotham,
         Text = guiSubtitle ~= "" and guiSubtitle or (guiCredits ~= "" and ("By " .. guiCredits) or "Welcome"),
-        TextColor3 = Theme.SubText, TextSize = 11, Parent = card,
+        TextColor3 = Theme.SubText, TextSize = 12, Parent = card,
     })
     if guiCredits ~= "" then
         create("TextLabel", {
             Name = "Credits", BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 203),
             Size = UDim2.new(1, -48, 0, 13), Font = Enum.Font.Gotham,
-            Text = "By " .. guiCredits, TextColor3 = Theme.SubText, TextSize = 12, Parent = card,
+            Text = "By " .. guiCredits, TextColor3 = Theme.SubText, TextSize = 10, Parent = card,
         })
     end
     local lineTrack = create("Frame", {
