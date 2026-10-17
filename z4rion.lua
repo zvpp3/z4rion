@@ -9,8 +9,9 @@
 --  Elements exist on BOTH sections and tabs (Tab:AddButton{...} works too).
 --  Every adder takes a config table and returns a handle (methods listed).
 --
---    :AddLabel(text | { Name })                              -> { Set(text) }
---    :AddParagraph({ Name, Content })                        -> { Set(content) }
+--    :AddLabel(text | { Name, Expandable = false })           -> { Set(text) }
+--    :AddParagraph({ Name, Content, Expandable = false })     -> { Set(content) }
+--  Expandable text starts closed; handles also expose SetExpanded(bool), Expanded.
 --    :AddButton({ Name, Callback })                          -> { Set(text) }
 --    :AddToggle({ Name, Default, Callback })                 -> { Set(bool), Value }
 --    :AddSlider({ Name, Min, Max, Increment, Default,
@@ -19,10 +20,23 @@
 --                 -> { Set(opt), Refresh(optsArray, deleteCurrent), Value }
 --    :AddMultiDropdown({ Name, Default, Options, Callback }) -> { Set(array), Value }
 --    :AddBind({ Name, Default (KeyCode), Hold, Callback })   -> { Set(keycode), Value }
---    :AddTextbox({ Name, Default, TextDisappear, Callback }) -> { Set(text) }
+--    :AddTextbox({ Name, Default, TextDisappear, Callback }) -> { Set(text), Value }
 --    :AddColorpicker({ Name, Default (Color3), Callback })   -> { Set(color3), Value }
 --
 --  Toggles/dropdowns/sliders/colorpickers fire Callback once at creation.
+--  Saved controls restore their saved value instead of firing the default.
+--
+--  MakeWindow also accepts SaveConfig (false by default), ConfigName (defaults
+--  to Name), and ConfigFolder (defaults to "z4rion"). Config files are named
+--  z4rion_<ConfigName>.txt and contain JSON. Requires executor file functions.
+--  Value controls accept Flag (unique stable ID) and SaveConfig (false by default).
+--  Set SaveConfig = true on BOTH the window and each control to opt into saving.
+--  Without Flag, IDs are generated from the tab/section/control names.
+--    Library:SaveCfg() / Library:SaveConfigFile() -> success, path/error
+--    Library:LoadConfig()                       -> success, error
+--    Library:LoadCfg(jsonString)                 -> success, error
+--  Changes auto-save after a short debounce; SaveConfig = false disables
+--  automatic loading/saving. Call SaveCfg/LoadConfig for manual use.
 --
 --    Library:MakeNotification('Title', 'Body', 3)
 --    Library:MakeNotification({ Name = 'Title', Content = 'Body', Time = 3 })
@@ -41,6 +55,7 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local UserInputService   = game:GetService("UserInputService")
 local TweenService       = game:GetService("TweenService")
 local RunService         = game:GetService("RunService")
+local HttpService        = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local guiTitle, guiSubtitle, guiCredits
@@ -131,6 +146,11 @@ function Library.new()
     local self = setmetatable({}, Library)
     self._connections = {}   -- library-owned connections, cleared on close
     self._notifyStack = {}    -- active notification toasts
+    self.Flags = {}
+    self.Folder = "z4rion"
+    self._configData = {}
+    self._flagCounts = {}
+    self._saveVersion = 0
     return self
 end
 
@@ -139,6 +159,200 @@ function Library:_connect(signal, callback)
     local connection = signal:Connect(callback)
     table.insert(self._connections, connection)
     return connection
+end
+
+--// Configs -------------------------------------------------------------- --
+local function configFileName(name)
+    local safe = tostring(name or "Script"):gsub('[%c<>:"/\\|?*]', "_")
+    safe = safe:gsub("%s+", "_"):gsub("[%. ]+$", "")
+    return "z4rion_" .. (safe ~= "" and safe or "Script") .. ".txt"
+end
+
+local function finite(value)
+    return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+local function packFlag(handle)
+    local value = handle.Value
+    if value == nil then
+        return { __z4rionNil = true }
+    elseif handle.Type == "Colorpicker" then
+        return { R = value.R * 255, G = value.G * 255, B = value.B * 255 }
+    elseif handle.Type == "Bind" then
+        return value.Name
+    end
+    return value
+end
+
+local function unpackFlag(handle, value)
+    local kind = handle.Type
+    if type(value) == "table" and value.__z4rionNil == true then
+        assert(kind == "Bind" or kind == "Dropdown", "This control cannot be empty")
+        return nil
+    elseif kind == "Colorpicker" then
+        assert(type(value) == "table", "Expected packed RGB color")
+        for _, channel in ipairs({ "R", "G", "B" }) do
+            assert(finite(value[channel]) and value[channel] >= 0 and value[channel] <= 255,
+                "Invalid color channel " .. channel)
+        end
+        return Color3.fromRGB(value.R, value.G, value.B)
+    elseif kind == "Bind" then
+        assert(type(value) == "string", "Expected a key name")
+        local key = Enum.KeyCode[value]
+        assert(key ~= nil, "Unknown key " .. value)
+        return key
+    elseif kind == "Toggle" then
+        assert(type(value) == "boolean", "Expected a boolean")
+    elseif kind == "Slider" then
+        assert(finite(value), "Expected a finite number")
+    elseif kind == "Textbox" then
+        assert(type(value) == "string", "Expected text")
+    elseif kind == "Dropdown" then
+        assert(type(value) == "string" or finite(value), "Expected an option")
+    elseif kind == "MultiDropdown" then
+        assert(type(value) == "table", "Expected an option array")
+        for index, option in pairs(value) do
+            assert(type(index) == "number" and index >= 1 and index % 1 == 0
+                and index <= #value, "Expected an option array")
+            assert(type(option) == "string" or finite(option), "Invalid option")
+        end
+    end
+    return value
+end
+
+function Library:GetConfigPath(name)
+    return self.Folder .. "/" .. configFileName(name or self.ConfigName)
+end
+
+function Library:SaveCfg(name)
+    local ok, result = pcall(function()
+        assert(typeof(writefile) == "function", "writefile is unavailable")
+        assert(typeof(isfolder) == "function" and typeof(makefolder) == "function",
+            "Folder file functions are unavailable")
+        if not isfolder(self.Folder) then
+            makefolder(self.Folder)
+        end
+        -- Preserve not-yet-created controls when saving during setup.
+        local data = {}
+        for flag, value in pairs(self._configData) do data[flag] = value end
+        for flag, handle in pairs(self.Flags) do
+            if handle.Save then data[flag] = packFlag(handle) else data[flag] = nil end
+        end
+        local path = self:GetConfigPath(name)
+        writefile(path, HttpService:JSONEncode(data))
+        self._configData = data
+        self._configLoadFailed = false
+        self._configDirty = false
+        return path
+    end)
+    if not ok then warn("z4rion Config Saver - " .. tostring(result)) end
+    return ok, result
+end
+
+Library.SaveConfigFile = Library.SaveCfg
+
+function Library:_restoreFlag(flag, handle)
+    local saved = self._configData[flag]
+    if saved == nil or not handle.Save then return false end
+    local previous = self._loadingConfig
+    self._loadingConfig = true
+    local ok, err = pcall(function()
+        local value = unpackFlag(handle, saved)
+        handle.Set(value)
+    end)
+    self._loadingConfig = previous
+    if not ok then
+        self._configLoadFailed = true
+        warn("z4rion Config Loader - Could not restore " .. flag .. ": " .. tostring(err))
+    end
+    return ok, err
+end
+
+function Library:LoadCfg(config)
+    local ok, data = pcall(function()
+        local decoded = HttpService:JSONDecode(config)
+        assert(type(decoded) == "table", "Expected a config object")
+        for flag in pairs(decoded) do
+            assert(type(flag) == "string", "Expected string flag names")
+        end
+        return decoded
+    end)
+    if not ok then
+        self._configLoadFailed = true
+        warn("z4rion Config Loader - " .. tostring(data))
+        return false, data
+    end
+    self._configData = data
+    self._saveVersion = self._saveVersion + 1
+    self._configDirty = false
+    self._configLoadFailed = false
+    local errors = {}
+    for flag, handle in pairs(self.Flags) do
+        if handle.Save and data[flag] ~= nil then
+            local restored, err = self:_restoreFlag(flag, handle)
+            if not restored then table.insert(errors, flag .. ": " .. tostring(err)) end
+        end
+    end
+    if #errors > 0 then
+        self._configLoadFailed = true
+        return false, table.concat(errors, "; ")
+    end
+    return true
+end
+
+function Library:LoadConfig(name)
+    local ok, config = pcall(function()
+        assert(typeof(isfile) == "function" and typeof(readfile) == "function",
+            "Read file functions are unavailable")
+        local path = self:GetConfigPath(name)
+        assert(isfile(path), "Config does not exist: " .. path)
+        return readfile(path)
+    end)
+    if not ok then
+        self._configLoadFailed = true
+        warn("z4rion Config Loader - " .. tostring(config))
+        return false, config
+    end
+    return self:LoadCfg(config)
+end
+
+function Library:_queueSave()
+    if not self.SaveConfig or self._loadingConfig or self._destroyed or self._configLoadFailed then
+        return
+    end
+    self._configDirty = true
+    self._saveVersion = self._saveVersion + 1
+    local version = self._saveVersion
+    task.delay(0.35, function()
+        if self.SaveConfig and not self._destroyed and not self._configLoadFailed
+            and self._configDirty and version == self._saveVersion then
+            self:SaveCfg()
+        end
+    end)
+end
+
+function Library:_registerFlag(cfg, handle, kind, scope)
+    local flag = cfg.Flag
+    if flag == nil then
+        local base = scope .. "/" .. kind .. ":" .. tostring(cfg.Name or kind)
+        self._flagCounts[base] = (self._flagCounts[base] or 0) + 1
+        flag = base .. "#" .. self._flagCounts[base]
+    else
+        flag = tostring(flag)
+    end
+    assert(not self.Flags[flag], "Duplicate config Flag: " .. flag)
+    handle.Flag, handle.Type = flag, kind
+    handle.SaveConfig = cfg.SaveConfig == true
+    handle.Save = handle.SaveConfig
+    self.Flags[flag] = handle
+    local originalSet = handle.Set
+    handle.Set = function(first, second)
+        local value = first
+        if first == handle then value = second end
+        originalSet(value)
+        if handle.Save then self:_queueSave() end
+    end
+    return self:_restoreFlag(flag, handle)
 end
 
 
@@ -151,6 +365,9 @@ function Library:MakeWindow(config)
     local title    = config.Name     or "Window"
     local subtitle = config.SubTitle or ""
     local credits = config.Credits or ""
+    self.ConfigName = config.ConfigName or title
+    self.Folder = config.ConfigFolder or "z4rion"
+    self.SaveConfig = config.SaveConfig == true
 
     --// ScreenGui, with re-execute cleanup of any previous instance --
     local guiName = "Window"
@@ -199,6 +416,26 @@ function Library:MakeWindow(config)
     end
 
     self._screenGui = screenGui
+    self:_connect(screenGui.Destroying, function()
+        self:Destroy()
+    end)
+
+    -- Read after replacing the old GUI, so its pending changes flush first.
+    if self.SaveConfig then
+        if typeof(isfile) == "function" and typeof(readfile) == "function"
+            and typeof(writefile) == "function" then
+            local ok, exists = pcall(isfile, self:GetConfigPath())
+            if ok and exists then
+                self:LoadConfig()
+            elseif not ok then
+                self._configLoadFailed = true
+                warn("z4rion Config Loader - " .. tostring(exists))
+            end
+        else
+            self.SaveConfig = false
+            warn("z4rion Config - File functions unavailable; automatic configs disabled")
+        end
+    end
 
     --// Notification container (bottom-right stack) --
     local notifyHolder = create("Frame", {
@@ -386,100 +623,155 @@ function Library:MakeWindow(config)
         -- so keep a reference to the library instance for tracked connections.
         local lib = self
 
-        --// Label ------------------------------------------------------- --
-        -- Accepts either a string or { Name = string }.
-        function target:AddLabel(cfg)
-            local text
-            if type(cfg) == "string" then
-                text = cfg
-            else
-                cfg = cfg or {}
-                text = cfg.Name or ""
-            end
-
-            local row = create("Frame", {
-                Size = UDim2.new(1, 0, 0, 0),
-                AutomaticSize = Enum.AutomaticSize.Y,
-                BackgroundColor3 = Theme.Panel,
-                BorderSizePixel = 0,
-                Parent = container,
-            })
-            corner(row, 8)
-            pad(row, 8)
-
-            local label = create("TextLabel", {
-                BackgroundTransparency = 1,
-                Size = UDim2.new(1, 0, 0, 0),
-                AutomaticSize = Enum.AutomaticSize.Y,
-                Font = Enum.Font.Gotham,
-                Text = text,
-                TextColor3 = Theme.SubText,
-                TextSize = 13,
-                TextWrapped = true,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                Parent = row,
-            })
-
-            return {
-                Set = function(newText)
-                    label.Text = newText
-                end,
-            }
-        end
-
-        --// Paragraph --------------------------------------------------- --
-        -- Bold title line plus a wrapped body that auto-sizes its height.
-        function target:AddParagraph(cfg)
-            cfg = cfg or {}
-
+        -- Labels and paragraphs share the same optional animated disclosure.
+        local function addTextPanel(cfg, paragraph)
+            local expandable = cfg.Expandable == true
+            local padding = paragraph and 10 or 8
+            local headerH = 30
             local panel = create("Frame", {
-                Size = UDim2.new(1, 0, 0, 0),
-                AutomaticSize = Enum.AutomaticSize.Y,
+                Name = paragraph and "Paragraph" or "Label",
+                Size = UDim2.new(1, 0, 0, expandable and headerH or 0),
+                AutomaticSize = expandable and Enum.AutomaticSize.None or Enum.AutomaticSize.Y,
                 BackgroundColor3 = Theme.Panel,
                 BorderSizePixel = 0,
+                ClipsDescendants = expandable,
                 Parent = container,
             })
             corner(panel, 8)
-            pad(panel, 10)
-            create("UIListLayout", {
+            local content = panel
+            local header, arrow
+            if expandable then
+                header = create("TextButton", {
+                    Name = "Expand",
+                    Size = UDim2.new(1, 0, 0, headerH),
+                    BackgroundTransparency = 1,
+                    AutoButtonColor = false,
+                    Text = "",
+                    Parent = panel,
+                })
+                arrow = create("TextLabel", {
+                    Name = "Arrow",
+                    AnchorPoint = Vector2.new(0.5, 0.5),
+                    Position = UDim2.fromScale(0.5, 0.5),
+                    Size = UDim2.fromOffset(18, 18),
+                    BackgroundTransparency = 1,
+                    Font = Enum.Font.GothamBold,
+                    Text = "\u{2304}",
+                    TextSize = 18,
+                    TextColor3 = Theme.SubText,
+                    Rotation = 0,
+                    Parent = header,
+                })
+                content = create("Frame", {
+                    Name = "TextContent",
+                    Position = UDim2.new(0, padding, 0, headerH + padding),
+                    Size = UDim2.new(1, -2 * padding, 0, 0),
+                    AutomaticSize = Enum.AutomaticSize.Y,
+                    BackgroundTransparency = 1,
+                    Parent = panel,
+                })
+            else
+                pad(panel, padding)
+            end
+            local layout = create("UIListLayout", {
                 FillDirection = Enum.FillDirection.Vertical,
                 Padding = UDim.new(0, 4),
                 SortOrder = Enum.SortOrder.LayoutOrder,
-                Parent = panel,
+                Parent = content,
             })
-
-            create("TextLabel", {
-                Name = "Title",
-                BackgroundTransparency = 1,
-                Size = UDim2.new(1, 0, 0, 18),
-                Font = Enum.Font.GothamBold,
-                Text = cfg.Name or "",
-                TextColor3 = Theme.Text,
-                TextSize = 14,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                Parent = panel,
-            })
-
+            local textLabels = {}
+            if paragraph then
+                local title = create("TextLabel", {
+                    Name = "Title",
+                    LayoutOrder = 1,
+                    BackgroundTransparency = 1,
+                    Size = UDim2.new(1, 0, 0, expandable and 0 or 18),
+                    AutomaticSize = expandable and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
+                    Font = Enum.Font.GothamBold,
+                    Text = cfg.Name or "",
+                    TextColor3 = Theme.Text,
+                    TextSize = 14,
+                    TextWrapped = expandable,
+                    TextTransparency = expandable and 1 or 0,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    Parent = content,
+                })
+                table.insert(textLabels, title)
+            end
             local body = create("TextLabel", {
                 Name = "Body",
+                LayoutOrder = 2,
                 BackgroundTransparency = 1,
                 Size = UDim2.new(1, 0, 0, 0),
                 AutomaticSize = Enum.AutomaticSize.Y,
                 Font = Enum.Font.Gotham,
-                Text = cfg.Content or "",
+                Text = paragraph and (cfg.Content or "") or (cfg.Name or ""),
                 TextColor3 = Theme.SubText,
                 TextSize = 13,
                 TextWrapped = true,
+                TextTransparency = expandable and 1 or 0,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 TextYAlignment = Enum.TextYAlignment.Top,
-                Parent = panel,
+                Parent = content,
             })
+            table.insert(textLabels, body)
+            local handle = { Expanded = not expandable }
+            handle.Set = function(first, second)
+                local text = first
+                if first == handle then text = second end
+                body.Text = text or ""
+            end
+            if expandable then
+                local sizeTween, arrowTween
+                local textTweens = {}
+                local function resize()
+                    if sizeTween then sizeTween:Cancel() end
+                    local height = headerH
+                    if handle.Expanded then
+                        height = height + layout.AbsoluteContentSize.Y + 2 * padding
+                    end
+                    sizeTween = TweenService:Create(panel, SMOOTH, { Size = UDim2.new(1, 0, 0, height) })
+                    sizeTween:Play()
+                end
+                handle.SetExpanded = function(first, second)
+                    local open = first
+                    if first == handle then open = second end
+                    handle.Expanded = open == true
+                    resize()
+                    if arrowTween then arrowTween:Cancel() end
+                    arrowTween = TweenService:Create(arrow, SMOOTH, {
+                        Rotation = handle.Expanded and 180 or 0,
+                    })
+                    arrowTween:Play()
+                    for index, label in ipairs(textLabels) do
+                        if textTweens[index] then textTweens[index]:Cancel() end
+                        textTweens[index] = TweenService:Create(label, SMOOTH, {
+                            TextTransparency = handle.Expanded and 0 or 1,
+                        })
+                        textTweens[index]:Play()
+                    end
+                end
+                header.Activated:Connect(function()
+                    handle.SetExpanded(not handle.Expanded)
+                end)
+                -- Recompute the tween target when wrapped text changes or the
+                -- page becomes visible at a different width, including Set().
+                lib:_connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+                    if handle.Expanded then resize() end
+                end)
+            end
+            return handle
+        end
 
-            return {
-                Set = function(content)
-                    body.Text = content
-                end,
-            }
+        --// Label ------------------------------------------------------- --
+        function target:AddLabel(cfg)
+            if type(cfg) == "string" then cfg = { Name = cfg } end
+            return addTextPanel(cfg or {}, false)
+        end
+
+        --// Paragraph --------------------------------------------------- --
+        function target:AddParagraph(cfg)
+            return addTextPanel(cfg or {}, true)
         end
 
         --// Button ------------------------------------------------------ --
@@ -580,6 +872,7 @@ function Library:MakeWindow(config)
                 state = newState and true or false
                 handle.Value = state
                 render()
+                if handle.Save then lib:_queueSave() end
                 if fire and cfg.Callback then
                     cfg.Callback(state)
                 end
@@ -594,7 +887,7 @@ function Library:MakeWindow(config)
             end
 
             -- Fire once for the default so logic + UI start in sync.
-            if cfg.Callback then
+            if not lib:_registerFlag(cfg, handle, "Toggle", target._configScope) and cfg.Callback then
                 cfg.Callback(state)
             end
             return handle
@@ -713,7 +1006,8 @@ function Library:MakeWindow(config)
                         Size = UDim2.new(alphaFor(value), 0, 1, 0),
                     }):Play()
                 end
-                if fireCallback and changed and cfg.Callback then
+                if changed and handle.Save then lib:_queueSave() end
+                if fireCallback and (changed or lib._loadingConfig) and cfg.Callback then
                     cfg.Callback(value)
                 end
             end
@@ -736,7 +1030,7 @@ function Library:MakeWindow(config)
             end
 
             -- Fire once at creation with the default value.
-            if cfg.Callback then
+            if not lib:_registerFlag(cfg, handle, "Slider", target._configScope) and cfg.Callback then
                 cfg.Callback(value)
             end
 
@@ -855,6 +1149,7 @@ function Library:MakeWindow(config)
                     optBtn.MouseButton1Click:Connect(function()
                         selected = option
                         handle.Value = selected
+                        if handle.Save then lib:_queueSave() end
                         refreshLabel()
                         setExpanded(false)
                         if cfg.Callback then
@@ -888,13 +1183,14 @@ function Library:MakeWindow(config)
                 if deleteCurrent then
                     selected = nil
                     handle.Value = nil
+                    if handle.Save then lib:_queueSave() end
                     refreshLabel()
                 end
                 rebuild(newOptions)
             end
 
             -- Fire once with the default selection.
-            if cfg.Callback and selected ~= nil then
+            if not lib:_registerFlag(cfg, handle, "Dropdown", target._configScope) and cfg.Callback and selected ~= nil then
                 cfg.Callback(selected)
             end
             return handle
@@ -1045,6 +1341,7 @@ function Library:MakeWindow(config)
                     chosen[option] = not chosen[option]
                     check.Text = chosen[option] and "\u{2713}" or ""
                     handle.Value = selectedList()
+                    if handle.Save then lib:_queueSave() end
                     refreshSummary()
                     if cfg.Callback then
                         cfg.Callback(selectedList())
@@ -1074,7 +1371,7 @@ function Library:MakeWindow(config)
             end
 
             -- Fire once with the default selection array.
-            if cfg.Callback then
+            if not lib:_registerFlag(cfg, handle, "MultiDropdown", target._configScope) and cfg.Callback then
                 cfg.Callback(selectedList())
             end
             return handle
@@ -1147,6 +1444,7 @@ function Library:MakeWindow(config)
                         else
                             key = input.KeyCode
                             handle.Value = key
+                            if handle.Save then lib:_queueSave() end
                             listening = false
                             chip.Text = keyName(key)
                         end
@@ -1195,6 +1493,7 @@ function Library:MakeWindow(config)
                 chip.Text = keyName(key)
             end
 
+            lib:_registerFlag(cfg, handle, "Bind", target._configScope)
             return handle
         end
 
@@ -1246,11 +1545,15 @@ function Library:MakeWindow(config)
             })
             local boxStroke = stroke(box, Theme.Stroke, 1)
 
+            local handle = { Value = box.Text }
+
             box.Focused:Connect(function()
                 TweenService:Create(boxStroke, FAST, { Color = Theme.Accent }):Play()
             end)
             box.FocusLost:Connect(function(enterPressed)
                 TweenService:Create(boxStroke, FAST, { Color = Theme.Stroke }):Play()
+                handle.Value = box.Text
+                if handle.Save then lib:_queueSave() end
                 if cfg.Callback then
                     cfg.Callback(box.Text, enterPressed)
                 end
@@ -1259,11 +1562,13 @@ function Library:MakeWindow(config)
                 end
             end)
 
-            return {
-                Set = function(text)
-                    box.Text = text
-                end,
-            }
+            handle.Set = function(text)
+                handle.Value = text or ""
+                box.Text = handle.Value
+                if cfg.Callback then cfg.Callback(handle.Value, false) end
+            end
+            lib:_registerFlag(cfg, handle, "Textbox", target._configScope)
+            return handle
         end
 
         --// Colorpicker ------------------------------------------------- --
@@ -1439,6 +1744,7 @@ function Library:MakeWindow(config)
             local function applyColor(fireCallback)
                 local current = Color3.fromHSV(h, s, v)
                 handle.Value = current
+                if handle.Save then lib:_queueSave() end
                 swatch.BackgroundColor3 = current
                 svSquare.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
                 svSelector.Position = UDim2.new(s, 0, 1 - v, 0)
@@ -1487,7 +1793,7 @@ function Library:MakeWindow(config)
             end
 
             -- Fire once at creation with the default color.
-            if cfg.Callback then
+            if not lib:_registerFlag(cfg, handle, "Colorpicker", target._configScope) and cfg.Callback then
                 cfg.Callback(Color3.fromHSV(h, s, v))
             end
 
@@ -1560,7 +1866,8 @@ function Library:MakeWindow(config)
             Parent = page,
         })
 
-        local tab = { Button = button, Label = label, Page = page }
+        local tab = { Button = button, Label = label, Page = page,
+            _configScope = tostring(tabConfig.Name or "Tab") }
         table.insert(window._tabs, tab)
 
         button.MouseButton1Click:Connect(function()
@@ -1609,7 +1916,7 @@ function Library:MakeWindow(config)
                 Parent = sectionFrame,
             })
 
-            local section = {}
+            local section = { _configScope = tab._configScope .. "/" .. tostring(sectionConfig.Name or "Section") }
             attachElements(section, sectionFrame)
             return section
         end
@@ -1689,6 +1996,7 @@ function Library:MakeWindow(config)
         TweenService:Create(main, POP, { Size = mainSize }):Play()
     end)
 
+    self:_queueSave()
     return window
 end
 
@@ -1855,6 +2163,12 @@ end
 --// Teardown ------------------------------------------------------------- --
 -- Destroys the GUI and disconnects every library-owned connection.
 function Library:Destroy()
+    if self._destroyed then return end
+    if self.SaveConfig and self._configDirty and not self._configLoadFailed then
+        self:SaveCfg()
+    end
+    self._destroyed = true
+    self._saveVersion = self._saveVersion + 1
     for _, connection in ipairs(self._connections) do
         if connection then
             connection:Disconnect()
