@@ -31,6 +31,7 @@
 --  MakeWindow accepts Icon = "rbxassetid://..." (Logo is an alias), using
 --  rbxassetid://134705462875606 by default. UseSplash = true is the default;
 --  UseSplash = false skips the entrance card. Lua booleans are lowercase.
+--  splashTip sets the splash heading; defaults to "YOUR WORKSPACE".
 --  MakeWindow also accepts SaveConfig (false by default), ConfigName (defaults
 --  to Name), and ConfigFolder (defaults to "AstraHub"). Config files are named
 --  AstraHub_<ConfigName>.txt and contain JSON. Requires executor file functions.
@@ -414,7 +415,10 @@ end
 
 function Library:_canShowHoverTip(row)
     if self._destroyed or self._windowWantedVisible == false or not row.Parent or not self._screenGui.Enabled then return false end
-    local mouse = UserInputService:GetMouseLocation()
+    -- AbsolutePosition uses the core-UI origin; mouse input includes the top bar.
+    local pointer = UserInputService:GetMouseLocation()
+    local inset = GuiService:GetGuiInset()
+    local mouse = Vector2.new(pointer.X - inset.X, pointer.Y - inset.Y)
     local function contains(object)
         local position, size = object.AbsolutePosition, object.AbsoluteSize
         return mouse.X >= position.X and mouse.X <= position.X + size.X
@@ -434,7 +438,10 @@ end
 
 function Library:_positionHoverTip()
     local tip = self._hoverTip
-    local mouse = UserInputService:GetMouseLocation()
+    local pointer = UserInputService:GetMouseLocation()
+    local inset = GuiService:GetGuiInset()
+    local origin = self._screenGui.AbsolutePosition
+    local mouse = Vector2.new(pointer.X - inset.X - origin.X, pointer.Y - inset.Y - origin.Y)
     local camera = Workspace.CurrentCamera
     local viewport = camera and camera.ViewportSize or self._screenGui.AbsoluteSize
     local width, height = tip.Size.X.Offset, tip.Size.Y.Offset
@@ -718,6 +725,7 @@ function Library:MakeWindow(config)
     if icon:match("^%d+$") then icon = "rbxassetid://" .. icon end
     self._icon = icon:match("^rbxassetid://%d+$") and icon or DEFAULT_ICON
     self._introPending = config.UseSplash ~= false
+    self._splashTip = tostring(config.splashTip or "YOUR WORKSPACE")
     local wantedVisible = true
     self._windowWantedVisible = true
     self.ConfigName = config.ConfigName or title
@@ -2590,7 +2598,7 @@ function Library:_playIntro(onDone)
     create("TextLabel", {
         Name = "Eyebrow", Position = UDim2.new(0, 24, 0, 19), Size = UDim2.new(1, -48, 0, 14),
         BackgroundTransparency = 1, Font = Enum.Font.GothamMedium,
-        Text = "YOUR WORKSPACE", TextSize = 9, TextColor3 = Theme.SubText, Parent = card,
+        Text = self._splashTip, TextSize = 9, TextColor3 = Theme.SubText, Parent = card,
     })
     local orbit = create("Frame", {
         Name = "Orbit", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, 94),
