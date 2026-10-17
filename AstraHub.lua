@@ -2627,7 +2627,7 @@ function Library:_playIntro(onDone)
         create("TextLabel", {
             Name = "Credits", BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 203),
             Size = UDim2.new(1, -48, 0, 13), Font = Enum.Font.Gotham,
-            Text = "By " .. guiCredits, TextColor3 = Theme.SubText, TextSize = 9, Parent = card,
+            Text = "By " .. guiCredits, TextColor3 = Theme.SubText, TextSize = 12, Parent = card,
         })
     end
     local lineTrack = create("Frame", {
