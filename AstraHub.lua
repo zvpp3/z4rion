@@ -885,13 +885,13 @@ function Library:MakeWindow(config)
     stroke(rail).Transparency = 0.7
     create("TextLabel", {
         BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 14),
-        Size = UDim2.new(1, -28, 0, 14), Text = "WORKSPACE", Font = Enum.Font.GothamBold,
+        Size = UDim2.new(1, -28, 0, 14), Text = "TABS", Font = Enum.Font.GothamBold,
         TextSize = 9, TextColor3 = Theme.SubText, TextXAlignment = Enum.TextXAlignment.Left,
         Parent = rail,
     })
     local sidebar = create("ScrollingFrame", {
-        Name = "Sidebar", Position = UDim2.fromOffset(12, 42),
-        Size = UDim2.new(1, -24, 1, -132), BackgroundTransparency = 1,
+        Name = "Sidebar", Position = UDim2.fromOffset(12, 50),
+        Size = UDim2.new(1, -24, 1, -140), BackgroundTransparency = 1,
         CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollingDirection = Enum.ScrollingDirection.Y, ScrollBarThickness = 2,
         ScrollBarImageColor3 = Theme.Accent, Parent = rail,
@@ -2578,7 +2578,7 @@ function Library:_playIntro(onDone)
     self:_tween(splash, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
     self:_tween(logoScale, TweenInfo.new(0.55, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Scale = 1 }):Play()
     self:_tween(orbit, TweenInfo.new(1.05, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), { Rotation = -8 }):Play()
-    self:_tween(glint, TweenInfo.new(1.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { Position = UDim2.new(1, 0, 0, 0) }):Play()
+    self:_tween(glint, TweenInfo.new(1.05, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1), { Position = UDim2.new(1, 0, 0, 0) }):Play()
     local ended, threads = false, {}
     local function cancel()
         if ended then return end
