@@ -103,6 +103,7 @@ local SLIDER_GLIDE = TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirec
 local THUMB_MOTION = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local TOAST_ENTER = TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local DEFAULT_ICON = "rbxassetid://87317389654710"
+local ICON_ROTATION_SPEED = 8 -- Degrees per second; one full turn every 45 seconds.
 local TITLE_HEIGHT = 64
 local SIDEBAR_WIDTH = 176
 
@@ -249,6 +250,16 @@ function Library:_connect(signal, callback)
     local connection = signal:Connect(callback)
     table.insert(self._connections, connection)
     return connection
+end
+
+-- Use frame time for a continuous spin at the same speed on every frame rate.
+function Library:_spinIcon(icon)
+    local connection = self:_connect(RunService.RenderStepped, function(dt)
+        icon.Rotation = (icon.Rotation + ICON_ROTATION_SPEED * dt) % 360
+    end)
+    self:_connect(icon.Destroying, function()
+        connection:Disconnect()
+    end)
 end
 
 -- Cancel only overlapping property animations so hover and movement cooperate.
@@ -848,6 +859,7 @@ function Library:MakeWindow(config)
         BackgroundTransparency = 1, Image = self._icon, ScaleType = Enum.ScaleType.Fit,
         Parent = titleBar,
     })
+    self:_spinIcon(brand)
     create("TextLabel", {
         Name = "Title", BackgroundTransparency = 1,
         Position = UDim2.fromOffset(68, 13), Size = UDim2.new(1, -166, 0, 23),
@@ -2611,6 +2623,7 @@ function Library:_playIntro(onDone)
         Size = UDim2.fromOffset(84, 84), BackgroundTransparency = 1,
         Image = self._icon, ScaleType = Enum.ScaleType.Fit, Parent = card,
     })
+    self:_spinIcon(logo)
     local logoScale = create("UIScale", { Scale = 0.86, Parent = logo })
     create("TextLabel", {
         Name = "Title", BackgroundTransparency = 1, Position = UDim2.fromOffset(24, 148),
