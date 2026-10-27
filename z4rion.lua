@@ -1577,9 +1577,14 @@ function Library:MakeWindow(config)
                 if listening then
                     if input.UserInputType == Enum.UserInputType.Keyboard then
                         if input.KeyCode == Enum.KeyCode.Escape then
-                            -- Cancel and keep the previous bind.
+                            key = nil
+                            handle.Value = nil
                             listening = false
-                            chip.Text = keyName(key)
+                            chip.Text = "None"
+                        
+                            if handle.Save then
+                                lib:_queueSave()
+                            end
                         else
                             key = input.KeyCode
                             handle.Value = key
