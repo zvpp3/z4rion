@@ -2,7 +2,7 @@
 --
 --  Setup:
 --    local Library = loadstring(game:HttpGet('YOUR_RAW_URL'))()
---    local Window  = Library:MakeWindow({ Name = 'Egg Farm', SubTitle = 'by zvppe' })
+--    local Window  = Library:MakeWindow({ Name = 'Something', SubTitle = 'by zvppe' })
 --    local Tab     = Window:MakeTab({ Name = 'Main' })
 --    local Section = Tab:AddSection({ Name = 'Main' })
 --
@@ -47,7 +47,6 @@
 --============================================================================--
 
 --============================================================================--
---  UI library hand-written (no HttpGet / loadstring for the UI)
 --  by zvppe
 --============================================================================--
 
