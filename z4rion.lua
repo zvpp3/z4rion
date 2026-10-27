@@ -1580,7 +1580,7 @@ function Library:MakeWindow(config)
                             key = nil
                             handle.Value = nil
                             listening = false
-                            chip.Text = "None"
+                            chip.Text = "NONE"
                         
                             if handle.Save then
                                 lib:_queueSave()
